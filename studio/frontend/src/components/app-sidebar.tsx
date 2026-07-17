@@ -1313,6 +1313,15 @@ export function AppSidebar() {
                       closeMobileIfOpen();
                     }}
                   />
+                  <NavItem
+                    icon={CpuIcon}
+                    label="RSMF Engine"
+                    active={pathname === "/rsmf"}
+                    onClick={() => {
+                      navigate({ to: "/rsmf" });
+                      closeMobileIfOpen();
+                    }}
+                  />
                 </SidebarMenu>
               </SidebarGroupContent>
             </CollapsibleContent>

@@ -241,7 +241,7 @@ def grouped_gemm_forward(
         assert topk_weights.is_contiguous()
         topk_weights = topk_weights.view(-1)
         if debug:
-            print(f"DEBUG::GROUPED_GEMM {topk_weights.tolist()} {gather_indices.tolist()}")
+            logging.debug("DEBUG::GROUPED_GEMM topk_weights shape=%s gather_indices shape=%s", topk_weights.shape, gather_indices.shape)
 
     y = torch.empty((total_tokens, N), device = X.device, dtype = X.dtype)
     # if total_tokens == 0 or N == 0:
@@ -258,10 +258,11 @@ def grouped_gemm_forward(
         pass
 
     if debug:
-        print(
-            f"DEBUG::GROUPED_GEMM {num_tokens = } {topk = } {num_experts = } {N = } {K = } {BLOCK_SIZE_M = } {BLOCK_SIZE_N = } {BLOCK_SIZE_K = } {permute_x = }"
+        logging.debug(
+            "DEBUG::GROUPED_GEMM num_tokens=%s topk=%s num_experts=%s N=%s K=%s BLOCK_SIZE_M=%s BLOCK_SIZE_N=%s BLOCK_SIZE_K=%s permute_x=%s",
+            num_tokens, topk, num_experts, N, K, BLOCK_SIZE_M, BLOCK_SIZE_N, BLOCK_SIZE_K, permute_x,
         )
-        print(f"DEBUG::GROUPED_GEMM {m_sizes.tolist()} {(gather_indices // topk).tolist()}")
+        logging.debug("DEBUG::GROUPED_GEMM m_sizes shape=%s gather_indices shape=%s", m_sizes.shape, gather_indices.shape)
 
     kernel_args = {
         # Inputs
@@ -425,10 +426,11 @@ def grouped_gemm_dX(
         pass
 
     if debug:
-        print(
-            f"DEBUG::GROUPED_GEMM {num_tokens = } {topk = } {output_shape = } {num_experts = } {N = } {K = } {BLOCK_SIZE_M = } {BLOCK_SIZE_N = } {BLOCK_SIZE_K = } {NUM_SMS = }"
+        logging.debug(
+            "DEBUG::GROUPED_GEMM_DX num_tokens=%s topk=%s output_shape=%s num_experts=%s N=%s K=%s BLOCK_SIZE_M=%s BLOCK_SIZE_N=%s BLOCK_SIZE_K=%s NUM_SMS=%s",
+            num_tokens, topk, output_shape, num_experts, N, K, BLOCK_SIZE_M, BLOCK_SIZE_N, BLOCK_SIZE_K, NUM_SMS,
         )
-        print(f"DEBUG::GROUPED_GEMM {m_sizes.tolist()}")
+        logging.debug("DEBUG::GROUPED_GEMM_DX m_sizes shape=%s", m_sizes.shape)
 
     kernel_args = {
         # Inputs
@@ -578,24 +580,11 @@ def grouped_gemm_dW(
         return (NUM_SMS,)
 
     if debug:
-        print(
-            f"DEBUG::GROUPED_GEMM_DW_TMA {num_experts = } {N = } {K = } {BLOCK_SIZE_M = } {BLOCK_SIZE_N = } {BLOCK_SIZE_K = } {NUM_SMS = }"
+        logging.debug(
+            "DEBUG::GROUPED_GEMM_DW_TMA num_experts=%s N=%s K=%s BLOCK_SIZE_M=%s BLOCK_SIZE_N=%s BLOCK_SIZE_K=%s NUM_SMS=%s",
+            num_experts, N, K, BLOCK_SIZE_M, BLOCK_SIZE_N, BLOCK_SIZE_K, NUM_SMS,
         )
-
-        print(f"DEBUG::GROUPED_GEMM_DW_TMA {m_sizes.tolist() = }")
-        print(f"DEBUG::GROUPED_GEMM_DW_TMA {gather_indices.tolist() = }")
-        m_start = 0
-        for i in range(num_experts):
-            expert_token_idx = gather_indices[m_start : m_start + m_sizes[i]]
-            t_start = 0
-            while t_start < m_sizes[i]:
-                token_idx = expert_token_idx[t_start : t_start + BLOCK_SIZE_M]
-                if permute_x:
-                    token_idx = token_idx // topk
-                print(f"DEBUG::GROUPED_GEMM_DW_TMA Token expert {i} indices: {token_idx.tolist()}")
-                t_start += BLOCK_SIZE_M
-
-            m_start += m_sizes[i]
+        logging.debug("DEBUG::GROUPED_GEMM_DW_TMA m_sizes shape=%s gather_indices shape=%s", m_sizes.shape, gather_indices.shape)
 
     kernel_args = {
         # Inputs

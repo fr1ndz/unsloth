@@ -31,6 +31,15 @@ rand = "0.10.0"
 tauri-plugin-notification = "2.3.3"
 tauri-plugin-window-state = "2"
 
+# RSMF: Resonant Stratified Manifold Flow training engine
+rsmf-core = { path = "../../../rsmf/crates/rsmf-core" }
+rsmf-layers = { path = "../../../rsmf/crates/rsmf-layers" }
+rsmf-resonance = { path = "../../../rsmf/crates/rsmf-resonance" }
+rsmf-train = { path = "../../../rsmf/crates/rsmf-train" }
+rsmf-distributed = { path = "../../../rsmf/crates/rsmf-distributed" }
+rsmf-moe = { path = "../../../rsmf/crates/rsmf-moe" }
+ndarray = { version = "0.16", features = ["serde"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

@@ -11,6 +11,7 @@ mod native_intents;
 mod native_path_policy;
 mod preflight;
 mod process;
+mod rsmf_commands;
 mod update;
 mod windows_job;
 
@@ -194,6 +195,7 @@ fn main() {
         .manage(new_backend_state())
         .manage(process::new_shutdown_flag())
         .manage(update::new_update_state())
+        .manage(rsmf_commands::RsmfState::new())
         .invoke_handler(tauri::generate_handler![
             commands::check_install_status,
             commands::desktop_preflight,
@@ -221,6 +223,11 @@ fn main() {
             native_intents::reveal_path_token,
             native_intents::open_path_token,
             has_saved_window_state,
+            rsmf_commands::rsmf_init_model,
+            rsmf_commands::rsmf_train_step,
+            rsmf_commands::rsmf_check_coherence,
+            rsmf_commands::rsmf_allocate_budget,
+            rsmf_commands::rsmf_get_spectrum,
         ])
         .setup(|app| {
             #[cfg(any(target_os = "windows", target_os = "linux"))]
