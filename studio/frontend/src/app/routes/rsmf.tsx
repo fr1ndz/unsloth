@@ -1,9 +1,12 @@
 /**
- * RSMF Route — TanStack Router file-based route.
+ * RSMF Route — registered as lazy-loaded page component.
+ *
+ * NOTE: TanStack Router codegen must be re-run after adding this file:
+ *   cd frontend && npx @tanstack/router-cli generate
+ * Until then, navigation uses string-based routing via window.location.
  */
-import { createFileRoute } from '@tanstack/react-router';
 import RsmfPage from '../../features/rsmf/RsmfPage';
 
-export const Route = createFileRoute('/rsmf')({
-  component: RsmfPage,
-});
+export default function RsmfRoute() {
+  return <RsmfPage />;
+}

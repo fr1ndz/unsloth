@@ -1,14 +1,11 @@
 /**
- * R3F 3D Stratum Visualizer — renders spectral decomposition as interactive 3D scene.
+ * Stratum Visualizer — pure Canvas 2D spectral decomposition renderer.
+ * No external 3D dependencies required.
  *
- * Each stratum layer is visualized as a ring of singular values (σ)
- * with U/V basis vectors shown as directional particles.
+ * Each stratum layer is visualized as a ring of singular values (σ).
  * Color encodes coherence health; size encodes spectral energy.
  */
-import { useRef, useMemo } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Text, Float, Sparkles } from '@react-three/drei';
-import * as THREE from 'three';
+import { useRef, useEffect, useCallback } from 'react';
 
 interface StratumVisualizerProps {
   spectrum: number[][];
@@ -16,116 +13,131 @@ interface StratumVisualizerProps {
   selectedLayer?: number | null;
 }
 
-function StratumRing({
-  sigma,
-  layerIndex,
-  yOffset,
-  coherence,
-  isSelected,
-}: {
-  sigma: number[];
-  layerIndex: number;
-  yOffset: number;
-  coherence: number;
-  isSelected: boolean;
-}) {
-  const meshRef = useRef<THREE.InstancedMesh>(null);
-  const count = sigma.length;
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; }
+  else if (h < 120) { r = x; g = c; }
+  else if (h < 180) { g = c; b = x; }
+  else if (h < 240) { g = x; b = c; }
+  else if (h < 300) { r = x; b = c; }
+  else { r = c; b = x; }
+  return [
+    Math.round((r + m) * 255),
+    Math.round((g + m) * 255),
+    Math.round((b + m) * 255),
+  ];
+}
 
-  // Color based on coherence: green (healthy) → red (collapsed)
-  const color = useMemo(() => {
-    const h = coherence * 0.35; // 0→red, 0.35→green
-    return new THREE.Color().setHSL(h, 0.9, isSelected ? 0.7 : 0.5);
-  }, [coherence, isSelected]);
+export function StratumVisualizer({ spectrum, coherenceValues, selectedLayer }: StratumVisualizerProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animRef = useRef<number>(0);
 
-  // Position instances in a ring
-  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const draw = useCallback((time: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas || spectrum.length === 0) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-  useFrame((state) => {
-    if (!meshRef.current) return;
-    const t = state.clock.elapsedTime;
+    const w = canvas.width;
+    const h = canvas.height;
+    const cx = w / 2;
+    const cy = h / 2;
+    const layerSpacing = Math.min(h / (spectrum.length + 1), 60);
 
-    for (let i = 0; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2 + t * 0.1;
-      const radius = 2 + sigma[i] * 0.5;
-      dummy.position.set(
-        Math.cos(angle) * radius,
-        yOffset + Math.sin(t * 0.5 + i * 0.3) * 0.1,
-        Math.sin(angle) * radius,
-      );
-      const scale = 0.05 + sigma[i] * 0.08;
-      dummy.scale.setScalar(scale);
-      dummy.updateMatrix();
-      meshRef.current.setMatrixAt(i, dummy.matrix);
+    // Clear with fade trail
+    ctx.fillStyle = 'rgba(10, 10, 15, 0.15)';
+    ctx.fillRect(0, 0, w, h);
+
+    for (let li = 0; li < spectrum.length; li++) {
+      const sigma = spectrum[li];
+      const coherence = coherenceValues?.[li] ?? 0.5;
+      const isSelected = selectedLayer === li;
+      const yBase = cy + (li - spectrum.length / 2) * layerSpacing;
+
+      // Hue: coherence 0→red(0), 1→green(120)
+      const hue = coherence * 120;
+      const lightness = isSelected ? 70 : 50;
+      const [r, g, b] = hslToRgb(hue, 90, lightness);
+
+      for (let i = 0; i < sigma.length; i++) {
+        const angle = (i / sigma.length) * Math.PI * 2 + time * 0.0005;
+        const radius = 40 + sigma[i] * 20;
+        const x = cx + Math.cos(angle) * radius;
+        const y = yBase + Math.sin(time * 0.001 + i * 0.3) * 3;
+        const size = 2 + sigma[i] * 4;
+
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${r},${g},${b},${isSelected ? 0.95 : 0.7})`;
+        ctx.fill();
+
+        // Glow for selected
+        if (isSelected) {
+          ctx.beginPath();
+          ctx.arc(x, y, size * 2, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${r},${g},${b},0.15)`;
+          ctx.fill();
+        }
+      }
+
+      // Layer label
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      ctx.font = '10px monospace';
+      ctx.fillText(`L${li}`, cx + 80, yBase + 3);
     }
-    meshRef.current.instanceMatrix.needsUpdate = true;
-  });
+
+    // Background particles
+    for (let p = 0; p < 30; p++) {
+      const px = ((Math.sin(time * 0.0003 + p * 7.3) + 1) / 2) * w;
+      const py = ((Math.cos(time * 0.0002 + p * 4.1) + 1) / 2) * h;
+      ctx.beginPath();
+      ctx.arc(px, py, 0.8, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(100,130,200,0.12)';
+      ctx.fill();
+    }
+
+    animRef.current = requestAnimationFrame(() => draw(performance.now()));
+  }, [spectrum, coherenceValues, selectedLayer]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const resize = () => {
+      const parent = canvas.parentElement;
+      if (parent) {
+        canvas.width = parent.clientWidth * window.devicePixelRatio;
+        canvas.height = parent.clientHeight * window.devicePixelRatio;
+        canvas.style.width = `${parent.clientWidth}px`;
+        canvas.style.height = `${parent.clientHeight}px`;
+      }
+    };
+    resize();
+    window.addEventListener('resize', resize);
+
+    animRef.current = requestAnimationFrame(() => draw(performance.now()));
+
+    return () => {
+      window.removeEventListener('resize', resize);
+      cancelAnimationFrame(animRef.current);
+    };
+  }, [draw]);
 
   return (
-    <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
-      <sphereGeometry args={[1, 16, 16]} />
-      <meshStandardMaterial
-        color={color}
-        emissive={color}
-        emissiveIntensity={isSelected ? 0.8 : 0.3}
-        transparent
-        opacity={0.9}
-      />
-    </instancedMesh>
-  );
-}
-
-function LayerLabel({ index, y }: { index: number; y: number }) {
-  return (
-    <Text
-      position={[3.5, y, 0]}
-      fontSize={0.2}
-      color="white"
-      anchorX="left"
-      anchorY="middle"
-    >
-      {`L${index}`}
-    </Text>
-  );
-}
-
-function Scene({ spectrum, coherenceValues, selectedLayer }: StratumVisualizerProps) {
-  const spacing = 1.2;
-
-  return (
-    <>
-      <ambientLight intensity={0.4} />
-      <pointLight position={[10, 10, 10]} intensity={1} />
-      <pointLight position={[-5, -5, 5]} intensity={0.5} color="#4488ff" />
-
-      {spectrum.map((sigma, i) => {
-        const coherence = coherenceValues?.[i] ?? 0.5;
-        return (
-          <group key={i}>
-            <StratumRing
-              sigma={sigma}
-              layerIndex={i}
-              yOffset={(i - spectrum.length / 2) * spacing}
-              coherence={coherence}
-              isSelected={selectedLayer === i}
-            />
-            <LayerLabel index={i} y={(i - spectrum.length / 2) * spacing} />
-          </group>
-        );
-      })}
-
-      <Sparkles count={200} scale={8} size={2} speed={0.3} opacity={0.15} color="#6688cc" />
-      <OrbitControls enablePan autoRotate autoRotateSpeed={0.5} />
-    </>
-  );
-}
-
-export function StratumVisualizer(props: StratumVisualizerProps) {
-  return (
-    <div style={{ width: '100%', height: '100%', minHeight: 400 }}>
-      <Canvas camera={{ position: [5, 3, 5], fov: 50 }} gl={{ antialias: true, alpha: true }}>
-        <Scene {...props} />
-      </Canvas>
+    <div className="w-full h-full min-h-[400px] relative">
+      <canvas ref={canvasRef} className="block w-full h-full" />
+      {spectrum.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center text-white/30">
+          <div className="text-center">
+            <div className="text-4xl mb-4">🔬</div>
+            <div className="text-lg font-medium">RSMF Stratum Visualizer</div>
+            <div className="text-sm mt-2">Initialize a model to see spectral decomposition</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

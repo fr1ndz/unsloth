@@ -1318,7 +1318,8 @@ export function AppSidebar() {
                     label="RSMF Engine"
                     active={pathname === "/rsmf"}
                     onClick={() => {
-                      navigate({ to: "/rsmf" });
+                      // Navigate via router — cast needed until codegen includes /rsmf
+                      navigate({ to: "/rsmf" as any });
                       closeMobileIfOpen();
                     }}
                   />

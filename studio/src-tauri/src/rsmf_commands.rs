@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use rsmf_core::SpectralConfig;
 use rsmf_layers::RsmfModel;
 use rsmf_train::{RsmfTrainer, ResonantLoss};
-use rsmf_distributed::model_config::{ModelArchitecture, DenseConfig, MoeConfig, ShardStrategy};
+use rsmf_distributed::model_config::{ModelArchitecture, DenseConfig, MoeConfig};
 use rsmf_distributed::budget::VramBudgetAllocator;
 use rsmf_distributed::topology::DeviceTopology;
 use rsmf_moe::MoeRsmfModel;
@@ -133,7 +133,10 @@ pub fn rsmf_init_model(
         _ => ResonantLoss::mse(),
     };
 
-    let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+    let mut inner = state.inner.lock().unwrap_or_else(|e| {
+        log::warn!("RSMF mutex recovered from poison");
+        e.into_inner()
+    });
     let model_id = inner.next_id;
     inner.next_id += 1;
 
@@ -206,7 +209,10 @@ pub fn rsmf_train_step(
     epoch: usize,
     batch_idx: usize,
 ) -> Result<RsmfTrainStepResult, String> {
-    let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+    let mut inner = state.inner.lock().unwrap_or_else(|e| {
+        log::warn!("RSMF mutex recovered from poison");
+        e.into_inner()
+    });
 
     let (_, trainer) = inner.models.iter_mut()
         .find(|(id, _)| *id == model_id)
@@ -235,7 +241,10 @@ pub fn rsmf_check_coherence(
     state: State<RsmfState>,
     model_id: u64,
 ) -> Result<Vec<RsmfCoherenceReport>, String> {
-    let inner = state.inner.lock().map_err(|e| e.to_string())?;
+    let inner = state.inner.lock().unwrap_or_else(|e| {
+        log::warn!("RSMF mutex recovered from poison");
+        e.into_inner()
+    });
 
     let (_, moe) = inner.moe_models.iter()
         .find(|(id, _)| *id == model_id)
@@ -316,7 +325,10 @@ pub fn rsmf_get_spectrum(
     state: State<RsmfState>,
     model_id: u64,
 ) -> Result<Vec<Vec<f64>>, String> {
-    let inner = state.inner.lock().map_err(|e| e.to_string())?;
+    let inner = state.inner.lock().unwrap_or_else(|e| {
+        log::warn!("RSMF mutex recovered from poison");
+        e.into_inner()
+    });
     let (_, trainer) = inner.models.iter()
         .find(|(id, _)| *id == model_id)
         .ok_or_else(|| format!("Model {} not found", model_id))?;

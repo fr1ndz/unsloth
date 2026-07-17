@@ -1,5 +1,8 @@
 /**
  * RSMF API bridge — calls Tauri IPC commands for RSMF training engine.
+ *
+ * NOTE: Tauri v2 auto-converts snake_case Rust command names to camelCase
+ * in the JS invoke() API. So `rsmf_init_model` becomes `rsmfInitModel`.
  */
 import { invoke } from '@tauri-apps/api/core';
 
@@ -60,6 +63,7 @@ export interface RsmfCoherenceReport {
   warnings: string[];
 }
 
+// Tauri v2 converts snake_case → camelCase automatically
 export async function initModel(
   modelConfig: RsmfModelConfig,
   trainConfig: RsmfTrainConfig,
