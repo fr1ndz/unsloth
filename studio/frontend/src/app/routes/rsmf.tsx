@@ -1,12 +1,21 @@
-/**
- * RSMF Route — registered as lazy-loaded page component.
- *
- * NOTE: TanStack Router codegen must be re-run after adding this file:
- *   cd frontend && npx @tanstack/router-cli generate
- * Until then, navigation uses string-based routing via window.location.
- */
-import RsmfPage from '../../features/rsmf/RsmfPage';
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-export default function RsmfRoute() {
-  return <RsmfPage />;
-}
+import { createRoute } from "@tanstack/react-router";
+import { lazy } from "react";
+import { requireAuth } from "../auth-guards";
+import { Route as rootRoute } from "./__root";
+
+const RsmfPage = lazy(() =>
+  import("@/features/rsmf/RsmfPage").then((m) => ({
+    default: m.default,
+  })),
+);
+
+export const Route = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/rsmf",
+  staticData: { title: "RSMF Engine" },
+  beforeLoad: () => requireAuth(),
+  component: RsmfPage,
+});
