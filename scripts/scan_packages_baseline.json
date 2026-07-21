@@ -1545,6 +1545,30 @@
       "severity": "HIGH",
       "evidence": "Obfusc: L836:         code = compile(module, \"<werkzeug routing>\", \"exec\")\nExec: L736:         exec(code, globs, locs)",
       "evidence_hash": "5c0992c90f05c772abd94d00784f157de337e1f8567f8b3aee1b15e46c96cd5d"
+    },
+    {
+      "package": "fastapi",
+      "file": "fastapi/routing.py",
+      "check": "C2 polling/beaconing loop detected",
+      "severity": "CRITICAL",
+      "evidence": "L587: while True:",
+      "evidence_hash": "06c2c7f15d73bf192e5e3272c5ff5fcaeff7f6774fef5f4eca6ef473ae50e2b3"
+    },
+    {
+      "package": "unsloth-zoo",
+      "file": "tests/test_mlx_save_export_regressions.py",
+      "check": "Writes to /tmp and executes (staged dropper)",
+      "severity": "CRITICAL",
+      "evidence": "L165: temporary_location=/tmp/ignored",
+      "evidence_hash": "ab5c587f9ec31a0cc10ee55698ab133a417148d9d3f371bbc81b1e13fa119c13"
+    },
+    {
+      "package": "unsloth-zoo",
+      "file": "tests/test_vision_collator_audio.py",
+      "check": "Writes to /tmp and executes (staged dropper)",
+      "severity": "CRITICAL",
+      "evidence": "L111: extract_audio_info /tmp/a.wav",
+      "evidence_hash": "2efe23ffbe2b91b8403aec9b700736919b59e5ca770f8e1f5501651b44b7d398"
     }
   ]
 }
