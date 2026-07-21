@@ -38,9 +38,10 @@ export function buildTrainingStartPayload(
 ): TrainingStartRequest {
   const isCpt = config.trainingMethod === "cpt";
   const isBonsaiLora = config.trainingMethod === "bonsai-lora";
-  const adapterMethod = config.trainingMethod !== "full";
+  const isOneBit = config.trainingMethod === "1bit-lora" || config.trainingMethod === "1bit-qlora" || config.trainingMethod === "1bit-loftq" || config.trainingMethod === "1bit-full";
+  const adapterMethod = config.trainingMethod !== "full" && config.trainingMethod !== "1bit-full";
   // Bonsai LoRA uses 4-bit quantization (same as QLoRA) for 2-4GB VRAM training
-  const isQloraMethod = config.trainingMethod === "qlora" || isBonsaiLora;
+  const isQloraMethod = config.trainingMethod === "qlora" || isBonsaiLora || config.trainingMethod === "1bit-qlora" || config.trainingMethod === "1bit-loftq";
   const _selectedModelLower = (config.selectedModel ?? "").toLowerCase();
   const isFourBitModel = _selectedModelLower.includes("4bit");
   // DeepSeek OCR ignores user-selected image size; do not send it.

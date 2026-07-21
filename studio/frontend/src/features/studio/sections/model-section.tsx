@@ -70,6 +70,11 @@ const METHOD_DOTS: Record<string, string> = {
   lora: "bg-blue-400",
   full: "bg-amber-400",
   cpt: "bg-purple-400",
+  "bonsai-lora": "bg-teal-400",
+  "1bit-lora": "bg-purple-500",
+  "1bit-qlora": "bg-purple-600",
+  "1bit-loftq": "bg-purple-700",
+  "1bit-full": "bg-purple-800",
 };
 
 const DARK_TRIGGER =
@@ -622,6 +627,30 @@ export function ModelSection() {
                       className={`size-2 shrink-0 rounded-full ${METHOD_DOTS["bonsai-lora"] ?? METHOD_DOTS.qlora}`}
                     />
                     Bonsai LoRA (2-4GB)
+                  </span>
+                </SelectItem>
+                <SelectItem value="1bit-lora">
+                  <span className="flex items-center gap-2">
+                    <span className="size-2 shrink-0 rounded-full bg-purple-500" />
+                    1-bit LoRA (~1GB)
+                  </span>
+                </SelectItem>
+                <SelectItem value="1bit-qlora">
+                  <span className="flex items-center gap-2">
+                    <span className="size-2 shrink-0 rounded-full bg-purple-600" />
+                    1-bit QLoRA (~1GB)
+                  </span>
+                </SelectItem>
+                <SelectItem value="1bit-loftq">
+                  <span className="flex items-center gap-2">
+                    <span className="size-2 shrink-0 rounded-full bg-purple-700" />
+                    1-bit LOFTQ (~1GB)
+                  </span>
+                </SelectItem>
+                <SelectItem value="1bit-full">
+                  <span className="flex items-center gap-2">
+                    <span className="size-2 shrink-0 rounded-full bg-purple-800" />
+                    1-bit Full Finetune
                   </span>
                 </SelectItem>
                 <SelectItem value="full">

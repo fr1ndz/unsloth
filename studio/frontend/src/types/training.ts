@@ -2,10 +2,10 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 export type ModelType = "vision" | "audio" | "embeddings" | "text";
-export type TrainingMethod = "qlora" | "lora" | "full" | "cpt" | "bonsai-lora";
+export type TrainingMethod = "qlora" | "lora" | "full" | "cpt" | "bonsai-lora" | "1bit-lora" | "1bit-qlora" | "1bit-loftq" | "1bit-full";
 
 export function isAdapterMethod(method: TrainingMethod): boolean {
-  return method === "lora" || method === "qlora" || method === "cpt" || method === "bonsai-lora";
+  return method === "lora" || method === "qlora" || method === "cpt" || method === "bonsai-lora" || method === "1bit-lora" || method === "1bit-qlora" || method === "1bit-loftq";
 }
 export type StepNumber = 1 | 2 | 3 | 4 | 5;
 export type DatasetSource = "huggingface" | "upload" | "s3";

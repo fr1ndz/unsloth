@@ -229,6 +229,7 @@ class ExportBackend:
         self.is_vision = False
         self.is_peft = False
         self._audio_type = None
+        self._training_type = None
 
     def cleanup_memory(self):
         """Offload and delete all models from memory"""
@@ -243,6 +244,7 @@ class ExportBackend:
             self.current_tokenizer = None
             self.current_checkpoint = None
             self._audio_type = None
+        self._training_type = None
 
             clear_gpu_cache()
 
@@ -444,6 +446,22 @@ class ExportBackend:
                 else None
             )
             metadata = {"base_model": base_model}
+            # Auto-detect training_type from checkpoint config if not set
+            if not self._training_type and self.current_checkpoint:
+                try:
+                    import json as _json
+                    _cfg_path = os.path.join(self.current_checkpoint, 'adapter_config.json')
+                    if os.path.exists(_cfg_path):
+                        with open(_cfg_path) as _cf:
+                            _acfg = _json.load(_cf)
+                        self._training_type = _acfg.get('training_type', '')
+                except Exception:
+                    pass
+            # Mark ternary 1-bit exports so inference can re-register STE hooks
+            _tt = getattr(self, '_training_type', None) or ''
+            if _tt.startswith('1-bit'):
+                metadata['ternary'] = True
+                metadata['training_type'] = _tt
             metadata_path = os.path.join(save_directory, "export_metadata.json")
             with open(metadata_path, "w") as f:
                 json.dump(metadata, f, indent = 2)

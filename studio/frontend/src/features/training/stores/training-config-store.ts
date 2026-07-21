@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-import { BONSAI_LORA_ALPHA, BONSAI_LORA_RANK, BONSAI_LORA_TARGET_MODULES, BONSAI_NEFTUNE_ALPHA, CPT_TARGET_MODULES, DEFAULT_HYPERPARAMS, LR_DEFAULT_BONSAI_LORA, LR_DEFAULT_CPT, LR_DEFAULT_FULL, LR_DEFAULT_LORA, STEPS, TARGET_MODULES } from "@/config/training";
+import { BONSAI_LORA_ALPHA, BONSAI_LORA_RANK, BONSAI_LORA_TARGET_MODULES, BONSAI_NEFTUNE_ALPHA, CPT_TARGET_MODULES, DEFAULT_HYPERPARAMS, LR_DEFAULT_1BIT_FULL, LR_DEFAULT_1BIT_LORA, LR_DEFAULT_1BIT_QLORA, LR_DEFAULT_BONSAI_LORA, LR_DEFAULT_CPT, LR_DEFAULT_FULL, LR_DEFAULT_LORA, ONEBIT_LORA_ALPHA, ONEBIT_LORA_RANK, ONEBIT_LORA_TARGET_MODULES, STEPS, TARGET_MODULES } from "@/config/training";
 import { authFetch } from "@/features/auth";
 import { getHfToken, mirrorHfTokenInto, useHfTokenStore } from "@/features/hub";
 import { isAdapterMethod } from "@/types/training";
@@ -45,6 +45,11 @@ async function autoSelectTrainingMethod(
     else if (contextLength > 8192) contextScale = 1.7;
 
     const estimatedUsage = modelSizeGb * 1.5 * contextScale;
+    // 1-bit methods auto-select: models >27B with <4GB free VRAM
+    // Ternary adapters {-1,0,+1} via STE — ~32x smaller than standard LoRA
+    if (modelSizeGb > 27 && freeGb < 4) {
+      return "1bit-qlora";
+    }
     // Bonsai LoRA auto-select: models >13B with 2-4GB free VRAM
     // Uses QLoRA-grade memory but trains adapters optimized for post-Bonsai compression
     if (modelSizeGb > 13 && freeGb >= 2 && freeGb < 4) {
@@ -368,6 +373,26 @@ function buildTrainingMethodPatch(
       gradientCheckpointing: "unsloth" as const,
       neftuneNoiseAlpha: BONSAI_NEFTUNE_ALPHA,
     });
+  // 1-bit methods: ternary adapters with STE — minimal VRAM, high LR compensation
+  if (nextMethod === "1bit-lora" || nextMethod === "1bit-qlora" || nextMethod === "1bit-loftq") {
+    Object.assign(patch, {
+      loraRank: ONEBIT_LORA_RANK,
+      loraAlpha: ONEBIT_LORA_ALPHA,
+      targetModules: [...ONEBIT_LORA_TARGET_MODULES],
+      lrSchedulerType: "cosine",
+      optimizerType: "paged_adamw_8bit",
+      gradientCheckpointing: "unsloth" as const,
+      neftuneNoiseAlpha: 5,
+      learningRate: nextMethod === "1bit-qlora" ? LR_DEFAULT_1BIT_QLORA : LR_DEFAULT_1BIT_LORA,
+    });
+  } else if (nextMethod === "1bit-full") {
+    Object.assign(patch, {
+      lrSchedulerType: "cosine",
+      optimizerType: "paged_adamw_8bit",
+      gradientCheckpointing: "unsloth" as const,
+      learningRate: LR_DEFAULT_1BIT_FULL,
+    });
+  } else
   } else if ((prevMethod as TrainingMethod) === "bonsai-lora" && (nextMethod as TrainingMethod) !== "bonsai-lora") {
     // Restore standard defaults when switching away from bonsai-lora
     Object.assign(patch, {

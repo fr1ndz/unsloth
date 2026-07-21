@@ -121,6 +121,15 @@ export const BONSAI_LORA_ALPHA = 128;
 export const BONSAI_LORA_TARGET_MODULES = ["all-linear"] as const;
 export const BONSAI_NEFTUNE_ALPHA = 5;
 
+// 1-bit training methods: ternary adapters {-1, 0, +1} via Straight-Through Estimator
+// Minimal VRAM footprint — adapters are ~32x smaller than standard LoRA
+export const ONEBIT_LORA_RANK = 8;
+export const ONEBIT_LORA_ALPHA = 32;
+export const ONEBIT_LORA_TARGET_MODULES = ["all-linear"] as const;
+export const LR_DEFAULT_1BIT_LORA = 5e-4;
+export const LR_DEFAULT_1BIT_QLORA = 3e-4;
+export const LR_DEFAULT_1BIT_FULL = 1e-5;
+
 export const DEFAULT_HYPERPARAMS = {
   epochs: 3,
   contextLength: 2048,

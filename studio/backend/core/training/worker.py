@@ -1494,7 +1494,7 @@ def _run_mlx_training(event_queue, stop_queue, config):
     is_dataset_image = bool(config.get("is_dataset_image", False))
     training_type = config.get("training_type", "LoRA/QLoRA")
     # Bonsai LoRA trains as standard LoRA/QLoRA; post-compression is applied at export
-    use_lora = training_type in ("LoRA/QLoRA", "Bonsai LoRA")
+    use_lora = training_type in ("LoRA/QLoRA", "Bonsai LoRA", "1-bit LoRA", "1-bit QLoRA", "1-bit LOFTQ")
     # Normalize seed; explicit None must not reach the seed chain.
     _raw_seed = config.get("random_seed", 3407)
     random_seed = 3407 if _raw_seed is None else int(_raw_seed)
@@ -3008,7 +3008,7 @@ def run_training_process(*, event_queue: Any, stop_queue: Any, config: dict) -> 
 
         training_type = config.get("training_type", "LoRA/QLoRA")
         is_cpt = training_type == "Continued Pretraining"
-        use_lora = training_type in ("LoRA/QLoRA", "Continued Pretraining", "Bonsai LoRA")
+        use_lora = training_type in ("LoRA/QLoRA", "Continued Pretraining", "Bonsai LoRA", "1-bit LoRA", "1-bit QLoRA", "1-bit LOFTQ")
         cpt_trains_embeddings = False
 
         # ── 4c. Load training model (uses VRAM — dataset already formatted) ──
@@ -3375,7 +3375,7 @@ def _run_embedding_training(event_queue: Any, stop_queue: Any, config: dict) -> 
         hf_token = hf_token if hf_token and hf_token.strip() else None
         max_seq_length = config.get("max_seq_length", 512)
         training_type = config.get("training_type", "LoRA/QLoRA")
-        use_lora = training_type in ("LoRA/QLoRA", "Bonsai LoRA")
+        use_lora = training_type in ("LoRA/QLoRA", "Bonsai LoRA", "1-bit LoRA", "1-bit QLoRA", "1-bit LOFTQ")
 
         # Malware gate (embedding): a poisoned pickle deserializes on load even with
         # trust_remote_code False, so check HF's security scan (metadata-only) first.
@@ -3487,7 +3487,7 @@ def _run_embedding_training(event_queue: Any, stop_queue: Any, config: dict) -> 
                 random_state = config.get("random_seed", 3407),
                 use_rslora = config.get("use_rslora", False),
                 loftq_config = {"loftq_bits": 4, "loftq_iter": 1}
-                if config.get("use_loftq")
+                if config.get("use_loftq") and training_type != "1-bit LOFTQ"
                 else None,
                 task_type = "FEATURE_EXTRACTION",
             )
@@ -3505,6 +3505,44 @@ def _run_embedding_training(event_queue: Any, stop_queue: Any, config: dict) -> 
     if _should_stop:
         event_queue.put({"type": "complete", "output_dir": None, "ts": time.time()})
         return
+
+    # -- 3.5 Register ternary STE hooks for 1-bit training --
+    _is_onebit = training_type in ("1-bit LoRA", "1-bit QLoRA", "1-bit LOFTQ", "1-bit Full Finetuning")
+    if _is_onebit:
+        import torch
+
+        class TernarySTE(torch.autograd.Function):
+            """Straight-Through Estimator for ternary weights {-1, 0, +1}."""
+            @staticmethod
+            def forward(ctx, weight):
+                return weight.sign().to(weight.dtype)
+            @staticmethod
+            def backward(ctx, grad_output):
+                return grad_output
+
+        def _register_ternary_hooks(mdl, is_full_ft=False):
+            hooks = []
+            for name, module in mdl.named_modules():
+                # For LoRA methods: only ternarize adapter layers
+                # For full finetuning: ternarize ALL linear layers
+                is_target = (
+                    isinstance(module, torch.nn.Linear)
+                    and (is_full_ft or "lora_" in name)
+                )
+                if is_target:
+                    def make_hook(mod):
+                        def hook_fn(m, inp):
+                            with torch.no_grad():
+                                m.weight.data = TernarySTE.apply(m.weight.data)
+                            return inp
+                        return hook_fn
+                    h = module.register_forward_pre_hook(make_hook(module))
+                    hooks.append(h)
+            return hooks
+
+        _is_full_ft = training_type == "1-bit Full Finetuning"
+        _ternary_hooks = _register_ternary_hooks(model, is_full_ft=_is_full_ft)
+        logger.info(f"[1-bit] Registered {len(_ternary_hooks)} ternary STE hooks for {training_type}")
 
     # ── 4. Load dataset ──
     _send_status(event_queue, "Loading dataset...")

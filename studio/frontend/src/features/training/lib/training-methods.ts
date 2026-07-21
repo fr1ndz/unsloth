@@ -9,6 +9,10 @@ const BACKEND_TRAINING_TYPE: Record<TrainingMethod, string> = {
   full: "Full Finetuning",
   cpt: "Continued Pretraining",
   "bonsai-lora": "Bonsai LoRA",
+  "1bit-lora": "1-bit LoRA",
+  "1bit-qlora": "1-bit QLoRA",
+  "1bit-loftq": "1-bit LOFTQ",
+  "1bit-full": "1-bit Full Finetuning",
 };
 
 const TRAINING_METHOD_LABELS: Record<TrainingMethod, string> = {
@@ -17,6 +21,10 @@ const TRAINING_METHOD_LABELS: Record<TrainingMethod, string> = {
   full: "Full",
   cpt: "CPT",
   "bonsai-lora": "Bonsai LoRA",
+  "1bit-lora": "1-bit LoRA",
+  "1bit-qlora": "1-bit QLoRA",
+  "1bit-loftq": "1-bit LOFTQ",
+  "1bit-full": "1-bit Full",
 };
 
 export function toBackendTrainingType(trainingMethod: TrainingMethod): string {
@@ -37,6 +45,11 @@ export function parseBackendTrainingMethod(
   loadIn4Bit: unknown,
 ): TrainingMethod {
   if (trainingType === "Continued Pretraining") return "cpt";
+  if (trainingType === "Bonsai LoRA") return "bonsai-lora";
+  if (trainingType === "1-bit LoRA") return "1bit-lora";
+  if (trainingType === "1-bit QLoRA") return "1bit-qlora";
+  if (trainingType === "1-bit LOFTQ") return "1bit-loftq";
+  if (trainingType === "1-bit Full Finetuning") return "1bit-full";
   if (trainingType === "LoRA/QLoRA") {
     return loadIn4Bit ? "qlora" : "lora";
   }

@@ -104,9 +104,9 @@ class TrainingStartRequest(BaseModel):
         max_length = 80,
         description = "Optional user-defined project name appended to run folders and shown in history",
     )
-    training_type: Literal["LoRA/QLoRA", "Full Finetuning", "Continued Pretraining", "Bonsai LoRA"] = Field(
+    training_type: Literal["LoRA/QLoRA", "Full Finetuning", "Continued Pretraining", "Bonsai LoRA", "1-bit LoRA", "1-bit QLoRA", "1-bit LOFTQ", "1-bit Full Finetuning"] = Field(
         ...,
-        description = "Training type: 'LoRA/QLoRA', 'Full Finetuning', 'Continued Pretraining', or 'Bonsai LoRA'",
+        description = "Training type: standard methods or 1-bit variants (1-bit LoRA, 1-bit QLoRA, 1-bit LOFTQ, 1-bit Full Finetuning)",
     )
     hf_token: Optional[str] = Field(None, description = "HuggingFace token")
     load_in_4bit: bool = Field(True, description = "Load model in 4-bit quantization")
