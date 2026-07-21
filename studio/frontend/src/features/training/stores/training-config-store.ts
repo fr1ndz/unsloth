@@ -373,8 +373,8 @@ function buildTrainingMethodPatch(
       gradientCheckpointing: "unsloth" as const,
       neftuneNoiseAlpha: BONSAI_NEFTUNE_ALPHA,
     });
-  // 1-bit methods: ternary adapters with STE — minimal VRAM, high LR compensation
-  if (nextMethod === "1bit-lora" || nextMethod === "1bit-qlora" || nextMethod === "1bit-loftq") {
+  } else if (nextMethod === "1bit-lora" || nextMethod === "1bit-qlora" || nextMethod === "1bit-loftq") {
+    // 1-bit methods: ternary adapters with STE — minimal VRAM, high LR compensation
     Object.assign(patch, {
       loraRank: ONEBIT_LORA_RANK,
       loraAlpha: ONEBIT_LORA_ALPHA,
@@ -392,7 +392,6 @@ function buildTrainingMethodPatch(
       gradientCheckpointing: "unsloth" as const,
       learningRate: LR_DEFAULT_1BIT_FULL,
     });
-  } else
   } else if ((prevMethod as TrainingMethod) === "bonsai-lora" && (nextMethod as TrainingMethod) !== "bonsai-lora") {
     // Restore standard defaults when switching away from bonsai-lora
     Object.assign(patch, {

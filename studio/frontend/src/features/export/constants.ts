@@ -335,6 +335,10 @@ export const METHOD_LABELS: Record<TrainingMethod, string> = {
   "bonsai-lora": "Bonsai LoRA",
   full: "Full Fine-tune",
   cpt: "Continued Pretraining",
+  "1bit-lora": "1-Bit LoRA",
+  "1bit-qlora": "1-Bit QLoRA",
+  "1bit-loftq": "1-Bit LoftQ",
+  "1bit-full": "1-Bit Full",
 };
 
 export const GUIDE_STEPS = [
