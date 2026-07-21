@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rsmf-core",
+    "crates/rsmf-layers",
+    "crates/rsmf-resonance",
+    "crates/rsmf-train",
+    "crates/rsmf-distributed",
+    "crates/rsmf-moe",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/siel-ai/rsmf"
+description = "Resonant Stratified Manifold Flow — novel full-parameter training paradigm for 4GB VRAM"
+
+[workspace.dependencies]
+rsmf-core = { path = "crates/rsmf-core" }
+rsmf-layers = { path = "crates/rsmf-layers" }
+rsmf-resonance = { path = "crates/rsmf-resonance" }
+rsmf-train = { path = "crates/rsmf-train" }
+rsmf-distributed = { path = "crates/rsmf-distributed" }
+rsmf-moe = { path = "crates/rsmf-moe" }
+
+# Numerical linear algebra
+ndarray = { version = "0.16", features = ["rayon", "serde"] }
+# NOTE: ndarray-linalg requires a LAPACK backend. On Windows without MKL/OpenBLAS,
+# we implement truncated SVD via power iteration in rsmf-core::svd module.
+# Uncomment when LAPACK is available:
+# ndarray-linalg = { version = "0.17", features = ["intel-mkl-static"] }
+num-traits = "0.2"
+half = { version = "2.4", features = ["num-traits"] }
+
+# Parallelism & memory
+rayon = "1.10"
+crossbeam = "0.8"
+parking_lot = "0.12"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Testing
+criterion = { version = "0.5", features = ["html_reports"] }
+approx = "0.5"
+rand = "0.8"
+rand_distr = "0.4"
