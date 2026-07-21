@@ -326,11 +326,8 @@ function resolveTrainingMethodLearningRate(
     return _yamlLearningRate ?? LR_DEFAULT_LORA;
   }
   if (wasAdapter && nowAdapter) {
-    // Switching between adapter methods (e.g. qlora -> bonsai-lora): use method-specific LR
-    if (!_learningRateManuallySet) {
-      if (nextMethod === "bonsai-lora") return LR_DEFAULT_BONSAI_LORA;
-    }
-    return undefined;
+    // Switching between adapter methods (e.g. qlora -> lora): keep current or use YAML LR
+    return _learningRateManuallySet ? undefined : (_yamlLearningRate ?? undefined);
   }
   return nowAdapter ? _yamlLearningRate ?? LR_DEFAULT_LORA : LR_DEFAULT_FULL;
 }
@@ -371,7 +368,7 @@ function buildTrainingMethodPatch(
       gradientCheckpointing: "unsloth" as const,
       neftuneNoiseAlpha: BONSAI_NEFTUNE_ALPHA,
     });
-  } else if (prevMethod === "bonsai-lora" && nextMethod !== "bonsai-lora") {
+  } else if ((prevMethod as TrainingMethod) === "bonsai-lora" && (nextMethod as TrainingMethod) !== "bonsai-lora") {
     // Restore standard defaults when switching away from bonsai-lora
     Object.assign(patch, {
       loraRank: DEFAULT_HYPERPARAMS.loraRank,

@@ -52,6 +52,7 @@ export interface TrainingStartRequest {
   lora_dropout: number;
   target_modules: string[];
   gradient_checkpointing: string;
+  neftune_noise_alpha: number;
   use_rslora: boolean;
   use_loftq: boolean;
   train_on_completions: boolean;

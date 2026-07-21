@@ -332,6 +332,7 @@ export function getEstimatedSize(
 export const METHOD_LABELS: Record<TrainingMethod, string> = {
   qlora: "QLoRA",
   lora: "LoRA",
+  "bonsai-lora": "Bonsai LoRA",
   full: "Full Fine-tune",
   cpt: "Continued Pretraining",
 };
