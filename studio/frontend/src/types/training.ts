@@ -2,10 +2,10 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 export type ModelType = "vision" | "audio" | "embeddings" | "text";
-export type TrainingMethod = "qlora" | "lora" | "full" | "cpt";
+export type TrainingMethod = "qlora" | "lora" | "full" | "cpt" | "bonsai-lora";
 
 export function isAdapterMethod(method: TrainingMethod): boolean {
-  return method === "lora" || method === "qlora" || method === "cpt";
+  return method === "lora" || method === "qlora" || method === "cpt" || method === "bonsai-lora";
 }
 export type StepNumber = 1 | 2 | 3 | 4 | 5;
 export type DatasetSource = "huggingface" | "upload" | "s3";
@@ -50,6 +50,7 @@ export interface WizardState {
   packing: boolean;
   trainOnCompletions: boolean;
   gradientCheckpointing: GradientCheckpointing;
+  neftuneNoiseAlpha: number;
   randomSeed: number;
   enableWandb: boolean;
   wandbToken: string;
@@ -94,6 +95,7 @@ export interface WizardActions {
   setPacking: (v: boolean) => void;
   setTrainOnCompletions: (v: boolean) => void;
   setGradientCheckpointing: (v: GradientCheckpointing) => void;
+  setNeftuneNoiseAlpha: (v: number) => void;
   setRandomSeed: (v: number) => void;
   setEnableWandb: (v: boolean) => void;
   setWandbToken: (v: string) => void;

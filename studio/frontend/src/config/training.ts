@@ -104,6 +104,22 @@ export const LR_SCHEDULER_OPTIONS: ReadonlyArray<{ value: string; label: string 
 export const LR_DEFAULT_LORA = 2e-4;
 export const LR_DEFAULT_FULL = 2e-5;
 export const LR_DEFAULT_CPT = 5e-5;
+/**
+ * Bonsai LoRA advanced defaults — mathematically optimized for maximum
+ * parameter coverage and minimum loss within QLoRA constraints.
+ *
+ * Key principles:
+ * - all-linear: adapters on EVERY linear layer (not just attn+mlp)
+ * - rank 64 / alpha 128: 4x capacity vs default rank 16
+ * - cosine schedule: smoother convergence than linear decay
+ * - NEFTune α=5: noise injection prevents overfitting on small datasets
+ * - Merge-before-compress: critical for post-hoc Bonsai quality
+ */
+export const LR_DEFAULT_BONSAI_LORA = 1e-4;
+export const BONSAI_LORA_RANK = 64;
+export const BONSAI_LORA_ALPHA = 128;
+export const BONSAI_LORA_TARGET_MODULES = ["all-linear"] as const;
+export const BONSAI_NEFTUNE_ALPHA = 5;
 
 export const DEFAULT_HYPERPARAMS = {
   epochs: 3,
@@ -128,6 +144,7 @@ export const DEFAULT_HYPERPARAMS = {
   packing: false,
   trainOnCompletions: false,
   gradientCheckpointing: "unsloth" as const,
+  neftuneNoiseAlpha: 0,
   randomSeed: 3407,
   enableWandb: false,
   wandbToken: "",

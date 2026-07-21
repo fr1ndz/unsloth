@@ -37,8 +37,10 @@ export function buildTrainingStartPayload(
   config: TrainingConfigState,
 ): TrainingStartRequest {
   const isCpt = config.trainingMethod === "cpt";
+  const isBonsaiLora = config.trainingMethod === "bonsai-lora";
   const adapterMethod = config.trainingMethod !== "full";
-  const isQloraMethod = config.trainingMethod === "qlora";
+  // Bonsai LoRA uses 4-bit quantization (same as QLoRA) for 2-4GB VRAM training
+  const isQloraMethod = config.trainingMethod === "qlora" || isBonsaiLora;
   const _selectedModelLower = (config.selectedModel ?? "").toLowerCase();
   const isFourBitModel = _selectedModelLower.includes("4bit");
   // DeepSeek OCR ignores user-selected image size; do not send it.
@@ -125,6 +127,7 @@ export function buildTrainingStartPayload(
     lora_dropout: config.loraDropout,
     target_modules: adapterMethod ? config.targetModules : [],
     gradient_checkpointing: config.gradientCheckpointing,
+    neftune_noise_alpha: config.neftuneNoiseAlpha || 0,
     use_rslora: config.loraVariant === "rslora",
     use_loftq: config.loraVariant === "loftq",
     // CPT always trains on full sequences (no chat format masking)

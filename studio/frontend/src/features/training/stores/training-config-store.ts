@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-import { CPT_TARGET_MODULES, DEFAULT_HYPERPARAMS, LR_DEFAULT_CPT, LR_DEFAULT_FULL, LR_DEFAULT_LORA, STEPS, TARGET_MODULES } from "@/config/training";
+import { BONSAI_LORA_ALPHA, BONSAI_LORA_RANK, BONSAI_LORA_TARGET_MODULES, BONSAI_NEFTUNE_ALPHA, CPT_TARGET_MODULES, DEFAULT_HYPERPARAMS, LR_DEFAULT_BONSAI_LORA, LR_DEFAULT_CPT, LR_DEFAULT_FULL, LR_DEFAULT_LORA, STEPS, TARGET_MODULES } from "@/config/training";
 import { authFetch } from "@/features/auth";
 import { getHfToken, mirrorHfTokenInto, useHfTokenStore } from "@/features/hub";
 import { isAdapterMethod } from "@/types/training";
@@ -45,6 +45,11 @@ async function autoSelectTrainingMethod(
     else if (contextLength > 8192) contextScale = 1.7;
 
     const estimatedUsage = modelSizeGb * 1.5 * contextScale;
+    // Bonsai LoRA auto-select: models >13B with 2-4GB free VRAM
+    // Uses QLoRA-grade memory but trains adapters optimized for post-Bonsai compression
+    if (modelSizeGb > 13 && freeGb >= 2 && freeGb < 4) {
+      return "bonsai-lora";
+    }
     return estimatedUsage <= freeGb ? "lora" : "qlora";
   } catch {
     return null;
@@ -314,10 +319,17 @@ function resolveTrainingMethodLearningRate(
   if (nextMethod === "cpt") {
     return LR_DEFAULT_CPT;
   }
+  if (nextMethod === "bonsai-lora") {
+    return LR_DEFAULT_BONSAI_LORA;
+  }
   if (wasCpt && nowAdapter) {
     return _yamlLearningRate ?? LR_DEFAULT_LORA;
   }
   if (wasAdapter && nowAdapter) {
+    // Switching between adapter methods (e.g. qlora -> bonsai-lora): use method-specific LR
+    if (!_learningRateManuallySet) {
+      if (nextMethod === "bonsai-lora") return LR_DEFAULT_BONSAI_LORA;
+    }
     return undefined;
   }
   return nowAdapter ? _yamlLearningRate ?? LR_DEFAULT_LORA : LR_DEFAULT_FULL;
@@ -345,6 +357,30 @@ function buildTrainingMethodPatch(
   const learningRate = resolveTrainingMethodLearningRate(prevMethod, nextMethod);
   if (learningRate !== undefined) {
     patch.learningRate = learningRate;
+  }
+
+  // Bonsai LoRA: auto-apply mathematically optimized hyperparameters
+  // for maximum parameter coverage and minimum loss within QLoRA constraints
+  if (nextMethod === "bonsai-lora") {
+    Object.assign(patch, {
+      loraRank: BONSAI_LORA_RANK,
+      loraAlpha: BONSAI_LORA_ALPHA,
+      targetModules: [...BONSAI_LORA_TARGET_MODULES],
+      lrSchedulerType: "cosine",
+      optimizerType: "paged_adamw_8bit",
+      gradientCheckpointing: "unsloth" as const,
+      neftuneNoiseAlpha: BONSAI_NEFTUNE_ALPHA,
+    });
+  } else if (prevMethod === "bonsai-lora" && nextMethod !== "bonsai-lora") {
+    // Restore standard defaults when switching away from bonsai-lora
+    Object.assign(patch, {
+      loraRank: DEFAULT_HYPERPARAMS.loraRank,
+      loraAlpha: DEFAULT_HYPERPARAMS.loraAlpha,
+      targetModules: [...TARGET_MODULES],
+      lrSchedulerType: DEFAULT_HYPERPARAMS.lrSchedulerType,
+      optimizerType: DEFAULT_HYPERPARAMS.optimizerType,
+      neftuneNoiseAlpha: 0,
+    });
   }
 
   return patch;
@@ -902,6 +938,7 @@ export const useTrainingConfigStore = create<TrainingConfigStore>()(
         },
         setGradientCheckpointing: (gradientCheckpointing) =>
           set({ gradientCheckpointing }),
+        setNeftuneNoiseAlpha: (neftuneNoiseAlpha) => set({ neftuneNoiseAlpha }),
         setRandomSeed: (randomSeed) => set({ randomSeed }),
         setEnableWandb: (enableWandb) => set({ enableWandb }),
         setWandbToken: (wandbToken) => set({ wandbToken }),

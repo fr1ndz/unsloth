@@ -8,6 +8,7 @@ const BACKEND_TRAINING_TYPE: Record<TrainingMethod, string> = {
   lora: "LoRA/QLoRA",
   full: "Full Finetuning",
   cpt: "Continued Pretraining",
+  "bonsai-lora": "Bonsai LoRA",
 };
 
 const TRAINING_METHOD_LABELS: Record<TrainingMethod, string> = {
@@ -15,6 +16,7 @@ const TRAINING_METHOD_LABELS: Record<TrainingMethod, string> = {
   lora: "LoRA",
   full: "Full",
   cpt: "CPT",
+  "bonsai-lora": "Bonsai LoRA",
 };
 
 export function toBackendTrainingType(trainingMethod: TrainingMethod): string {

@@ -3224,6 +3224,12 @@ class UnslothTrainer:
                 ),
                 "max_seq_length": training_args.get("max_seq_length", 2048),
             }
+            # NEFTune: noise injection into embeddings for better generalization
+            # α=5 is the recommended value from the NEFTune paper (Jain et al., 2023)
+            _neftune_alpha = training_args.get("neftune_noise_alpha")
+            if _neftune_alpha and float(_neftune_alpha) > 0:
+                config_args["neftune_noise_alpha"] = float(_neftune_alpha)
+                logger.info(f"NEFTune enabled: noise_alpha={_neftune_alpha}\n")
             if training_args.get("enable_tensorboard", False):
                 config_args["logging_dir"] = str(
                     resolve_tensorboard_dir(training_args.get("tensorboard_dir"))

@@ -616,6 +616,14 @@ export function ModelSection() {
                     LoRA (16-bit)
                   </span>
                 </SelectItem>
+                <SelectItem value="bonsai-lora">
+                  <span className="flex items-center gap-2">
+                    <span
+                      className={`size-2 shrink-0 rounded-full ${METHOD_DOTS["bonsai-lora"] ?? METHOD_DOTS.qlora}`}
+                    />
+                    Bonsai LoRA (2-4GB)
+                  </span>
+                </SelectItem>
                 <SelectItem value="full">
                   <span className="flex items-center gap-2">
                     <span

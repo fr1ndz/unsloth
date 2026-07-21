@@ -1493,7 +1493,8 @@ def _run_mlx_training(event_queue, stop_queue, config):
     resume_from_checkpoint = config.get("resume_from_checkpoint") or None
     is_dataset_image = bool(config.get("is_dataset_image", False))
     training_type = config.get("training_type", "LoRA/QLoRA")
-    use_lora = training_type == "LoRA/QLoRA"
+    # Bonsai LoRA trains as standard LoRA/QLoRA; post-compression is applied at export
+    use_lora = training_type in ("LoRA/QLoRA", "Bonsai LoRA")
     # Normalize seed; explicit None must not reach the seed chain.
     _raw_seed = config.get("random_seed", 3407)
     random_seed = 3407 if _raw_seed is None else int(_raw_seed)
@@ -3007,7 +3008,7 @@ def run_training_process(*, event_queue: Any, stop_queue: Any, config: dict) -> 
 
         training_type = config.get("training_type", "LoRA/QLoRA")
         is_cpt = training_type == "Continued Pretraining"
-        use_lora = training_type in ("LoRA/QLoRA", "Continued Pretraining")
+        use_lora = training_type in ("LoRA/QLoRA", "Continued Pretraining", "Bonsai LoRA")
         cpt_trains_embeddings = False
 
         # ── 4c. Load training model (uses VRAM — dataset already formatted) ──
@@ -3374,7 +3375,7 @@ def _run_embedding_training(event_queue: Any, stop_queue: Any, config: dict) -> 
         hf_token = hf_token if hf_token and hf_token.strip() else None
         max_seq_length = config.get("max_seq_length", 512)
         training_type = config.get("training_type", "LoRA/QLoRA")
-        use_lora = training_type == "LoRA/QLoRA"
+        use_lora = training_type in ("LoRA/QLoRA", "Bonsai LoRA")
 
         # Malware gate (embedding): a poisoned pickle deserializes on load even with
         # trust_remote_code False, so check HF's security scan (metadata-only) first.

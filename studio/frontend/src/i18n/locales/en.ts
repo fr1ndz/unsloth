@@ -774,9 +774,11 @@ export const en = {
       vramEstimate: "~{vram}GB VRAM",
       method: "Method",
       methodTooltip:
-        "QLoRA uses 4-bit quantization for lowest VRAM. LoRA uses 16-bit. Full updates all weights. CPT (Continued Pretraining) trains on raw text to adapt the model to a new domain without chat formatting.",
+        "QLoRA uses 4-bit quantization for lowest VRAM. LoRA uses 16-bit. Full updates all weights. Bonsai LoRA maximizes parameter coverage (all-linear, rank 64) with NEFTune noise injection for near-full-finetune quality at QLoRA VRAM cost. CPT (Continued Pretraining) trains on raw text to adapt the model to a new domain without chat formatting.",
       readMore: "Read more",
       fullFineTune: "Full Fine-tune",
+      bonsaiLora: "Bonsai LoRA",
+      bonsaiLoraDescription: "Maximum coverage QLoRA with NEFTune regularization",
       checkingToken: "Checking token...",
       getOrUpdateToken: "Get or update token",
       huggingFaceTokenOptional: "Hugging Face Token (Optional)",
