@@ -339,6 +339,7 @@ export const METHOD_LABELS: Record<TrainingMethod, string> = {
   "1bit-qlora": "1-Bit QLoRA",
   "1bit-loftq": "1-Bit LoftQ",
   "1bit-full": "1-Bit Full",
+  "1bit-quantize": "1-Bit Quantize",
 };
 
 export const GUIDE_STEPS = [
