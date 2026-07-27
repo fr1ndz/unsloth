@@ -44,32 +44,31 @@ import {
 import { usePlatformStore } from "@/config/env";
 import { useHubModelSearch } from "@/features/hub/hooks/use-hub-model-search";
 import { confirmRemoteCodeIfNeeded } from "@/features/security";
+import { prepareHfTokenForUse } from "@/features/hf-auth";
 import { GuidedTour, useGuidedTourController } from "@/features/tour";
 import {
   type LocalModelInfo,
-  listLocalModels,
   useTrainingConfigStore,
 } from "@/features/training";
 import { useDebouncedValue, useHfTokenValidation } from "@/hooks";
 import { useHardwareInfo } from "@/hooks/use-hardware-info";
 import { ChevronDownStandardIcon } from "@/lib/chevron-icons";
-import { PruningPanel } from "./components/pruning-panel";
 import {
   AlertCircleIcon,
   FolderSearchIcon,
   InformationCircleIcon,
   Key01Icon,
-  PackageIcon,
-  Search01Icon,
+  MoreHorizontalIcon,
   Scissor01Icon,
-  Settings01Icon,
+  Search01Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { ModelCheckpoints } from "./api/export-api";
-import { fetchCheckpoints } from "./api/export-api";
 import { ExportRunPanel } from "./components/export-run-panel";
+import { PruningPanel } from "./components/pruning-panel";
 import { MethodPicker } from "./components/method-picker";
 import { QuantPicker } from "./components/quant-picker";
 import {
@@ -84,6 +83,12 @@ import {
   mergedFormatPayload,
 } from "./constants";
 import { useExportSizeEstimate } from "./hooks/use-export-size-estimate";
+import {
+  getCachedCheckpoints,
+  getCachedLocalModels,
+  refreshCheckpoints,
+  refreshLocalModels,
+} from "./export-navigation-cache";
 import {
   isExportPanelActive,
   useExportRuntimeStore,
@@ -173,8 +178,12 @@ export function ExportPage() {
   );
 
   // ---- API-driven checkpoint state ----
-  const [models, setModels] = useState<ModelCheckpoints[]>([]);
-  const [loadingCheckpoints, setLoadingCheckpoints] = useState(true);
+  const [models, setModels] = useState<ModelCheckpoints[]>(
+    () => getCachedCheckpoints() ?? [],
+  );
+  const [loadingCheckpoints, setLoadingCheckpoints] = useState(
+    getCachedCheckpoints() === null,
+  );
   const [checkpointError, setCheckpointError] = useState<string | null>(null);
 
   const [selectedModelIdx, setSelectedModelIdx] = useState<string | null>(null);
@@ -186,8 +195,12 @@ export function ExportPage() {
     null,
   );
   const [localModelInput, setLocalModelInput] = useState("");
-  const [localModels, setLocalModels] = useState<LocalModelInfo[]>([]);
-  const [isLoadingLocalModels, setIsLoadingLocalModels] = useState(true);
+  const [localModels, setLocalModels] = useState<LocalModelInfo[]>(
+    () => getCachedLocalModels() ?? [],
+  );
+  const [isLoadingLocalModels, setIsLoadingLocalModels] = useState(
+    getCachedLocalModels() === null,
+  );
   const [localModelsError, setLocalModelsError] = useState<string | null>(null);
   const debouncedModelQuery = useDebouncedValue(modelInput);
   const debouncedHfToken = useDebouncedValue(hfToken, 500);
@@ -208,8 +221,7 @@ export function ExportPage() {
   });
   // GGUF importance matrix (required for the IQ quants) and merged-export precision.
   const [useImatrix, setUseImatrix] = useState(false);
-  const [imatrixPath, setImatrixPath] = useState("");
-  const [showPruning, setShowPruning] = useState(false);
+  // Merged precision: one or more MERGED_FORMATS values, exported in one run. Seed from a live run
   // so navigating away and back (which remounts this page) keeps the selection, like exportMethod.
   const [selectedFormats, setSelectedFormats] = useState<string[]>(() => {
     const s = useExportRuntimeStore.getState();
@@ -297,16 +309,15 @@ export function ExportPage() {
   // ---- Fetch checkpoints on mount ----
   useEffect(() => {
     let cancelled = false;
-    setLoadingCheckpoints(true);
-    setCheckpointError(null);
-    fetchCheckpoints()
-      .then((data) => {
+    const hadCache = getCachedCheckpoints() !== null;
+    refreshCheckpoints()
+      .then((models) => {
         if (!cancelled) {
-          setModels(data.models);
+          setModels(models);
         }
       })
       .catch((err) => {
-        if (!cancelled) {
+        if (!cancelled && !hadCache) {
           setCheckpointError(
             err instanceof Error ? err.message : "Failed to load checkpoints",
           );
@@ -345,14 +356,15 @@ export function ExportPage() {
 
   // ---- Fetch local models for direct export ----
   useEffect(() => {
-    const controller = new AbortController();
-    void listLocalModels(controller.signal)
+    let cancelled = false;
+    const hadCache = getCachedLocalModels() !== null;
+    void refreshLocalModels()
       .then((models) => {
-        if (controller.signal.aborted) return;
+        if (cancelled) return;
         setLocalModels(models);
       })
       .catch((error) => {
-        if (controller.signal.aborted) return;
+        if (cancelled || hadCache) return;
         setLocalModelsError(
           error instanceof Error
             ? error.message
@@ -360,10 +372,12 @@ export function ExportPage() {
         );
       })
       .finally(() => {
-        if (controller.signal.aborted) return;
+        if (cancelled) return;
         setIsLoadingLocalModels(false);
       });
-    return () => controller.abort();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ---- Derived state ----
@@ -727,11 +741,17 @@ export function ExportPage() {
     const checkpointPath = selectedCp?.path ?? null;
 
     const pushToHub = destination === "hub";
+    const preparedToken = await prepareHfTokenForUse(hfToken, {
+      allowAnonymous: !pushToHub,
+    });
+    if (!preparedToken.proceed) return;
+    const actionHfToken = preparedToken.token ?? "";
+
     const repoId =
       pushToHub && hfUsername && modelName
         ? `${hfUsername}/${modelName}`
         : undefined;
-    const token = pushToHub && hfToken ? hfToken : undefined;
+    const token = pushToHub && actionHfToken ? actionHfToken : undefined;
     // The GGUF method with the LoRA target reuses the LoRA-adapter export path.
     const effectiveMethod: ExportMethod = ggufAsLora ? "lora" : exportMethod;
     const emitLoraGguf =
@@ -750,7 +770,7 @@ export function ExportPage() {
     if (sourceMode !== "checkpoint") {
       const remoteCodeOk = await confirmRemoteCodeIfNeeded({
         modelName: source,
-        hfToken: hfToken || null,
+        hfToken: actionHfToken || null,
         // An HF source can need trust_remote_code via its YAML default with no
         // auto_map to review; signal it so a YAML-only model does not export
         // with it false.
@@ -770,7 +790,7 @@ export function ExportPage() {
       modelSource,
       trustRemoteCode,
       approvedRemoteCodeFingerprint,
-      loadToken: hfToken || null,
+      loadToken: actionHfToken || null,
       exportMethod: effectiveMethod,
       isAdapter: adapterExport,
       quantLevels,
@@ -877,7 +897,7 @@ export function ExportPage() {
         <GuidedTour {...tour.tourProps} />
 
         <div className="mb-8 flex flex-col gap-0.5">
-          <h1 className="text-[30px] font-semibold leading-[1.04] tracking-[-0.028em] text-foreground sm:text-[34px]">
+          <h1 className="text-ui-30 font-semibold leading-[1.04] tracking-[-0.028em] text-foreground sm:text-ui-34">
             Export Model
           </h1>
           <p className="text-sm text-muted-foreground">
@@ -946,21 +966,21 @@ export function ExportPage() {
                         <TabsTrigger
                           value="local"
                           indicatorClassName="hub-tab-toggle-pill rounded-full"
-                          className="h-9 rounded-full border-0 px-3 text-[12.5px] text-muted-foreground hover:text-foreground data-active:text-foreground data-[state=active]:text-foreground"
+                          className="h-9 rounded-full border-0 px-3 text-ui-12p5 text-muted-foreground hover:text-foreground data-active:text-foreground data-[state=active]:text-foreground"
                         >
                           Local Model
                         </TabsTrigger>
                         <TabsTrigger
                           value="checkpoint"
                           indicatorClassName="hub-tab-toggle-pill rounded-full"
-                          className="h-9 rounded-full border-0 px-3 text-[12.5px] text-muted-foreground hover:text-foreground data-active:text-foreground data-[state=active]:text-foreground"
+                          className="h-9 rounded-full border-0 px-3 text-ui-12p5 text-muted-foreground hover:text-foreground data-active:text-foreground data-[state=active]:text-foreground"
                         >
                           Fine-tuned
                         </TabsTrigger>
                         <TabsTrigger
                           value="hf"
                           indicatorClassName="hub-tab-toggle-pill rounded-full"
-                          className="h-9 rounded-full border-0 px-3 text-[12.5px] text-muted-foreground hover:text-foreground data-active:text-foreground data-[state=active]:text-foreground"
+                          className="h-9 rounded-full border-0 px-3 text-ui-12p5 text-muted-foreground hover:text-foreground data-active:text-foreground data-[state=active]:text-foreground"
                         >
                           Hugging Face
                         </TabsTrigger>
@@ -1271,7 +1291,7 @@ export function ExportPage() {
                                         <span className="block min-w-0 flex-1 truncate">
                                           {model?.display_name ?? id}
                                         </span>
-                                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                                        <span className="ml-auto shrink-0 text-ui-10 text-muted-foreground">
                                           {source}
                                         </span>
                                       </ComboboxItem>
@@ -1282,15 +1302,15 @@ export function ExportPage() {
                             </Combobox>
                           </div>
                           {isLoadingLocalModels ? (
-                            <p className="text-[10px] text-muted-foreground">
+                            <p className="text-ui-10 text-muted-foreground">
                               Scanning local models...
                             </p>
                           ) : localModelsError ? (
-                            <p className="text-[10px] text-red-500">
+                            <p className="text-ui-10 text-red-500">
                               {localModelsError}
                             </p>
                           ) : (
-                            <p className="text-[10px] text-muted-foreground">
+                            <p className="text-ui-10 text-muted-foreground">
                               {exportableLocalModels.length > 0
                                 ? `${exportableLocalModels.length} local/cached models found`
                                 : "No local models found. Enter path manually."}
@@ -1300,7 +1320,7 @@ export function ExportPage() {
                       )}
 
                       <div className="rounded-xl bg-foreground/[0.04] p-3">
-                        <p className="text-[11px] text-muted-foreground">
+                        <p className="text-ui-11 text-muted-foreground">
                           Direct model exports currently support GGUF only.
                         </p>
                       </div>
@@ -1309,7 +1329,7 @@ export function ExportPage() {
 
                   {sourceMode === "checkpoint" && (
                     <div className="rounded-xl bg-foreground/[0.04] p-3 flex flex-col gap-2">
-                      <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                      <span className="text-ui-11 font-medium text-muted-foreground uppercase tracking-wider">
                         Training Info
                       </span>
                       <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 text-xs sm:grid-cols-2">
@@ -1356,7 +1376,7 @@ export function ExportPage() {
                         key={step}
                         className="flex items-start gap-2 text-xs text-muted-foreground"
                       >
-                        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-[10px] font-semibold">
+                        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-ui-10 font-semibold">
                           {i + 1}
                         </span>
                         {step}
@@ -1404,7 +1424,7 @@ export function ExportPage() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <div className="text-sm font-medium">Precision</div>
-                      <span className="text-[11px] text-muted-foreground/70">
+                      <span className="text-ui-11 text-muted-foreground/70">
                         — select one or more
                       </span>
                     </div>
@@ -1461,7 +1481,7 @@ export function ExportPage() {
                                       {f.label}
                                       {f.needsCalibration ? " *" : ""}
                                     </span>
-                                    <span className="text-[10px] text-muted-foreground">
+                                    <span className="text-ui-10 text-muted-foreground">
                                       {f.hint}
                                     </span>
                                   </span>
@@ -1474,7 +1494,7 @@ export function ExportPage() {
 
                     {selectedFormats.length > 0 && (
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                        <span className="text-[11px] text-muted-foreground">
+                        <span className="text-ui-11 text-muted-foreground">
                           {selectedFormats.length} selected:{" "}
                           {selectedFormats
                             .map(
@@ -1488,7 +1508,7 @@ export function ExportPage() {
                           <button
                             type="button"
                             onClick={() => setSelectedFormats(["16-bit"])}
-                            className="text-[11px] text-muted-foreground/70 hover:text-foreground transition-colors"
+                            className="text-ui-11 text-muted-foreground/70 hover:text-foreground transition-colors"
                           >
                             Reset to 16-bit
                           </button>
@@ -1497,7 +1517,7 @@ export function ExportPage() {
                     )}
 
                     {hubMultiFormat && (
-                      <div className="text-[11px] text-amber-600 dark:text-amber-500">
+                      <div className="text-ui-11 text-amber-600 dark:text-amber-500">
                         Hub export supports one format at a time (each writes to
                         the repository root). Select a single format, or export
                         locally to produce several at once.
@@ -1509,13 +1529,13 @@ export function ExportPage() {
                         MERGED_FORMATS.find((f) => f.value === v)
                           ?.needsCalibration,
                     ) && (
-                      <div className="text-[11px] text-muted-foreground">
+                      <div className="text-ui-11 text-muted-foreground">
                         * calibrates on data (uses a small calibration set).
                       </div>
                     )}
 
                     {!hasNvidia && (
-                      <div className="text-[11px] text-muted-foreground">
+                      <div className="text-ui-11 text-muted-foreground">
                         No NVIDIA GPU detected: compressed-tensors formats are
                         hidden. 16-bit and portable FP8/INT8 (torchao) still
                         work here and load in vLLM.
@@ -1684,33 +1704,6 @@ export function ExportPage() {
 
               <Separator />
               {showPanel && (
-
-            {/* ── Structured Pruning Toggle + Panel ── */}
-            {showPanel && isModelLoaded && !isExportActive && (
-              <div className="flex items-center gap-2 px-1">
-                <Button
-                  variant={showPruning ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setShowPruning((v) => !v)}
-                >
-                  <HugeiconsIcon icon={Scissor01Icon} className="mr-1 size-3" />
-                  Structured Pruning
-                </Button>
-              </div>
-            )}
-            {showPanel && showPruning && isModelLoaded && (
-              <div className="px-1">
-                <PruningPanel
-                  modelLoaded={isModelLoaded}
-                  onPruneComplete={(path) => {
-                    toast({ title: "Pruned model saved", description: path });
-                  }}
-                  onError={(msg) => {
-                    toast({ title: "Pruning error", description: msg, variant: "destructive" });
-                  }}
-                />
-              </div>
-            )}
                 <ExportRunPanel
                   exportMethod={exportMethod}
                   quantLevels={quantLevels}
