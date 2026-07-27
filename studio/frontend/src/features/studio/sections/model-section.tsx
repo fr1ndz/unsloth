@@ -653,6 +653,12 @@ export function ModelSection() {
                     1-bit Full Finetune
                   </span>
                 </SelectItem>
+                <SelectItem value="1bit-quantize">
+                  <span className="flex items-center gap-2">
+                    <span className="size-2 shrink-0 rounded-full bg-emerald-500" />
+                    1-bit Quantize (no training)
+                  </span>
+                </SelectItem>
                 <SelectItem value="full">
                   <span className="flex items-center gap-2">
                     <span

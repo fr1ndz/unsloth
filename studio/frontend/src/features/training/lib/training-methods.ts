@@ -13,6 +13,7 @@ const BACKEND_TRAINING_TYPE: Record<TrainingMethod, string> = {
   "1bit-qlora": "1-bit QLoRA",
   "1bit-loftq": "1-bit LOFTQ",
   "1bit-full": "1-bit Full Finetuning",
+  "1bit-quantize": "1-bit Quantize",
 };
 
 const TRAINING_METHOD_LABELS: Record<TrainingMethod, string> = {
@@ -25,6 +26,7 @@ const TRAINING_METHOD_LABELS: Record<TrainingMethod, string> = {
   "1bit-qlora": "1-bit QLoRA",
   "1bit-loftq": "1-bit LOFTQ",
   "1bit-full": "1-bit Full",
+  "1bit-quantize": "1-bit Quantize",
 };
 
 export function toBackendTrainingType(trainingMethod: TrainingMethod): string {
@@ -50,6 +52,7 @@ export function parseBackendTrainingMethod(
   if (trainingType === "1-bit QLoRA") return "1bit-qlora";
   if (trainingType === "1-bit LOFTQ") return "1bit-loftq";
   if (trainingType === "1-bit Full Finetuning") return "1bit-full";
+  if (trainingType === "1-bit Quantize") return "1bit-quantize";
   if (trainingType === "LoRA/QLoRA") {
     return loadIn4Bit ? "qlora" : "lora";
   }

@@ -2,7 +2,7 @@
 // Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
 export type ModelType = "vision" | "audio" | "embeddings" | "text";
-export type TrainingMethod = "qlora" | "lora" | "full" | "cpt" | "bonsai-lora" | "1bit-lora" | "1bit-qlora" | "1bit-loftq" | "1bit-full";
+export type TrainingMethod = "qlora" | "lora" | "full" | "cpt" | "bonsai-lora" | "1bit-lora" | "1bit-qlora" | "1bit-loftq" | "1bit-full" | "1bit-quantize";
 
 export function isAdapterMethod(method: TrainingMethod): boolean {
   return method === "lora" || method === "qlora" || method === "cpt" || method === "bonsai-lora" || method === "1bit-lora" || method === "1bit-qlora" || method === "1bit-loftq";

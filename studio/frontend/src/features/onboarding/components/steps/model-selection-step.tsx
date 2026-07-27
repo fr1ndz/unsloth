@@ -369,7 +369,9 @@ export function ModelSelectionStep() {
                 <SelectItem value="1bit-qlora">1-bit QLoRA (~1GB)</SelectItem>
                 <SelectItem value="1bit-loftq">1-bit LOFTQ (~1GB)</SelectItem>
                 <SelectItem value="1bit-full">1-bit Full Finetune</SelectItem>
+                <SelectItem value="1bit-quantize">1-bit Quantize (no training)</SelectItem>
                 <SelectItem value="full">Full Fine-tune</SelectItem>
+
                 <SelectItem value="cpt">Continued Pretraining</SelectItem>
               </SelectContent>
             </Select>
