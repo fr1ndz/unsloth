@@ -41,6 +41,9 @@ from .export import (
     ExportGGUFRequest,
     ExportLoRAAdapterRequest,
     ExportOneBitRequest,
+    PruningAnalyzeRequest,
+    PruningApplyRequest,
+    PruningAnalysisResponse,
 )
 from .users import Token
 from .datasets import (
@@ -106,6 +109,9 @@ __all__ = [
     "ExportGGUFRequest",
     "ExportLoRAAdapterRequest",
     "ExportOneBitRequest",
+    "PruningAnalyzeRequest",
+    "PruningApplyRequest",
+    "PruningAnalysisResponse",
     "Token",
     # Dataset schemas
     "CheckFormatRequest",

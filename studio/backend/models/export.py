@@ -226,6 +226,31 @@ class ExportGGUFRequest(BaseModel):
     )
 
 
+class PruningAnalyzeRequest(BaseModel):
+    """Request for structured pruning analysis (preview mode)."""
+    ratio: float = Field(0.3, ge=0.0, le=1.0, description="Target pruning ratio (0.0-1.0)")
+    method: str = Field("magnitude", description="Importance scoring method: magnitude, wanda, random")
+    granularity: str = Field("layer", description="Pruning granularity: layer or neuron")
+
+
+class PruningApplyRequest(ExportCommonOptions):
+    """Request for applying structured pruning and saving result."""
+    ratio: float = Field(0.3, ge=0.0, le=1.0, description="Target pruning ratio (0.0-1.0)")
+    method: str = Field("magnitude", description="Importance scoring method")
+
+
+class PruningAnalysisResponse(BaseModel):
+    """Response from pruning analysis."""
+    total_params: int
+    target_ratio: float
+    actual_ratio: float
+    actual_pruned_params: int
+    estimated_speedup: float
+    layers_to_prune: List[str]
+    layer_scores: List[Dict[str, Any]]
+    elapsed_seconds: float
+
+
 class ExportOneBitRequest(ExportCommonOptions):
     """Request for post-training 1-bit ternary quantization (Bonsai format)."""
 

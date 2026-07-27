@@ -41,6 +41,9 @@ from models import (
     ExportGGUFRequest,
     ExportLoRAAdapterRequest,
     ExportOneBitRequest,
+    PruningAnalyzeRequest,
+    PruningApplyRequest,
+    PruningAnalysisResponse,
 )
 
 router = APIRouter()
@@ -516,6 +519,109 @@ async def export_one_bit(
             status_code=500,
             detail="Failed to export 1-bit model",
         )
+
+
+@router.post("/pruning/analyze", response_model=PruningAnalysisResponse)
+async def analyze_pruning(
+    request: PruningAnalyzeRequest, current_subject: str = Depends(get_current_subject)
+):
+    """Analyze model for structured pruning (preview mode, no modification).
+    
+    Returns layer importance scores and pruning plan for the given ratio.
+    Requires a model to be loaded via /load-checkpoint first.
+    """
+    try:
+        backend = get_export_backend()
+        if not backend.current_model or not backend.current_tokenizer:
+            raise HTTPException(status_code=400, detail="No model loaded. Please select a checkpoint first.")
+        
+        from core.training.structured_pruning import StructuredPruner, PruningConfig
+        
+        config = PruningConfig(
+            ratio=request.ratio,
+            method=request.method,
+            granularity=request.granularity,
+        )
+        
+        pruner = StructuredPruner(backend.current_model, backend.current_tokenizer)
+        analysis = await asyncio.to_thread(pruner.analyze, config=config)
+        
+        return PruningAnalysisResponse(
+            total_params=analysis.total_params,
+            target_ratio=analysis.target_ratio,
+            actual_ratio=analysis.actual_ratio,
+            actual_pruned_params=analysis.actual_pruned_params,
+            estimated_speedup=analysis.estimated_speedup,
+            layers_to_prune=analysis.layers_to_prune,
+            layer_scores=[
+                {
+                    "name": l.name,
+                    "module_type": l.module_type,
+                    "num_params": l.num_params,
+                    "importance": round(l.importance_score, 6),
+                    "weight_magnitude": round(l.weight_magnitude, 6),
+                    "prune_candidate": l.prune_candidate,
+                    "cumulative_ratio": round(l.cumulative_ratio, 4),
+                }
+                for l in analysis.layers
+            ],
+            elapsed_seconds=analysis.elapsed_seconds,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error analyzing pruning: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Pruning analysis failed: {str(e)}")
+
+
+@router.post("/pruning/apply", response_model=ExportOperationResponse)
+async def apply_pruning(
+    request: PruningApplyRequest, current_subject: str = Depends(get_current_subject)
+):
+    """Apply structured pruning and save the pruned model.
+    
+    Removes least important layers based on importance scoring.
+    Requires a model to be loaded via /load-checkpoint first.
+    """
+    try:
+        _ensure_export_supported()
+        backend = get_export_backend()
+        if not backend.current_model or not backend.current_tokenizer:
+            raise HTTPException(status_code=400, detail="No model loaded. Please select a checkpoint first.")
+        
+        from core.training.structured_pruning import StructuredPruner, PruningConfig
+        
+        config = PruningConfig(ratio=request.ratio, method=request.method)
+        pruner = StructuredPruner(backend.current_model, backend.current_tokenizer)
+        
+        save_dir = str(request.save_directory)
+        from utils.paths.storage_roots import resolve_export_write_dir, ensure_dir
+        from pathlib import Path
+        save_dir = str(resolve_export_write_dir(save_dir))
+        ensure_dir(Path(save_dir))
+        
+        def _do_prune():
+            model, analysis = pruner.prune(config=config)
+            # Save pruned model
+            model.save_pretrained(save_dir)
+            backend.current_tokenizer.save_pretrained(save_dir)
+            return True, f"Pruned {analysis.actual_ratio:.1%} of parameters ({analysis.actual_pruned_params:,} params)", save_dir
+        
+        success, message, output_path = await asyncio.to_thread(_do_prune)
+        
+        if not success:
+            raise HTTPException(status_code=400, detail=message)
+        
+        return ExportOperationResponse(
+            success=True,
+            message=message,
+            details=_export_details(output_path),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error applying pruning: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Pruning failed: {str(e)}")
 
 
 # Live export log stream (Server-Sent Events).
