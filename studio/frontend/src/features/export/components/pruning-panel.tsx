@@ -12,6 +12,7 @@ import {
   Scissor01Icon,
 } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import {
   Tooltip,
@@ -20,7 +21,6 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { authFetch } from "@/features/auth";
-import { useToast } from "@/hooks/use-toast";
 
 interface LayerScore {
   name: string;
@@ -48,10 +48,13 @@ interface PruningPanelProps {
   modelLoaded: boolean;
   /** Called after successful pruning with the output path. */
   onPruneComplete?: (outputPath: string) => void;
+  /** Called on error with message. */
+  onError?: (message: string) => void;
 }
 
-export function PruningPanel({ modelLoaded, onPruneComplete }: PruningPanelProps) {
-  const { toast } = useToast();
+export function PruningPanel({ modelLoaded, onPruneComplete, onError }: PruningPanelProps) {
+  const notifyError = (msg: string) => { onError?.(msg); console.error(`[Pruning] ${msg}`); };
+  const notifySuccess = (msg: string) => { console.info(`[Pruning] ${msg}`); };
   const [ratio, setRatio] = useState(30); // percentage 0-100
   const [method, setMethod] = useState<"magnitude" | "wanda">("magnitude");
   const [analyzing, setAnalyzing] = useState(false);
@@ -89,15 +92,15 @@ export function PruningPanel({ modelLoaded, onPruneComplete }: PruningPanelProps
       const data = (await resp.json()) as PruningAnalysis;
       setAnalysis(data);
     } catch (e) {
-      toast({ title: "Pruning analysis failed", description: String(e), variant: "destructive" });
+      notifyError(`Pruning analysis failed: ${String(e)}`);
     } finally {
       setAnalyzing(false);
     }
-  }, [modelLoaded, ratio, method, toast]);
+  }, [modelLoaded, ratio, method, notifyError]);
 
   const applyPruning = useCallback(async () => {
     if (!analysis || !saveDir.trim()) {
-      toast({ title: "Please specify a save directory", variant: "destructive" });
+      notifyError("Please specify a save directory");
       return;
     }
     setApplying(true);
@@ -116,14 +119,14 @@ export function PruningPanel({ modelLoaded, onPruneComplete }: PruningPanelProps
         throw new Error(err.detail || "Pruning failed");
       }
       const data = await resp.json();
-      toast({ title: "Pruning complete", description: data.message });
+      notifySuccess(data.message);
       onPruneComplete?.(data.details?.output_path ?? saveDir);
     } catch (e) {
-      toast({ title: "Pruning failed", description: String(e), variant: "destructive" });
+      notifyError(`Pruning failed: ${String(e)}`);
     } finally {
       setApplying(false);
     }
-  }, [analysis, saveDir, ratio, method, toast, onPruneComplete]);
+  }, [analysis, saveDir, ratio, method, notifyError, onPruneComplete]);
 
   const formatParams = (n: number) => {
     if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;

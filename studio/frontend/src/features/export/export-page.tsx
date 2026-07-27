@@ -60,7 +60,8 @@ import {
   Key01Icon,
   PackageIcon,
   Search01Icon,
-} from "@hugeicons/core-free-icons";
+  Scissor01Icon,
+  Settings01Icon,
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -207,7 +208,8 @@ export function ExportPage() {
   });
   // GGUF importance matrix (required for the IQ quants) and merged-export precision.
   const [useImatrix, setUseImatrix] = useState(false);
-  // Merged precision: one or more MERGED_FORMATS values, exported in one run. Seed from a live run
+  const [imatrixPath, setImatrixPath] = useState("");
+  const [showPruning, setShowPruning] = useState(false);
   // so navigating away and back (which remounts this page) keeps the selection, like exportMethod.
   const [selectedFormats, setSelectedFormats] = useState<string[]>(() => {
     const s = useExportRuntimeStore.getState();
@@ -1682,6 +1684,33 @@ export function ExportPage() {
 
               <Separator />
               {showPanel && (
+
+            {/* ── Structured Pruning Toggle + Panel ── */}
+            {showPanel && isModelLoaded && !isExportActive && (
+              <div className="flex items-center gap-2 px-1">
+                <Button
+                  variant={showPruning ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setShowPruning((v) => !v)}
+                >
+                  <HugeiconsIcon icon={Scissor01Icon} className="mr-1 size-3" />
+                  Structured Pruning
+                </Button>
+              </div>
+            )}
+            {showPanel && showPruning && isModelLoaded && (
+              <div className="px-1">
+                <PruningPanel
+                  modelLoaded={isModelLoaded}
+                  onPruneComplete={(path) => {
+                    toast({ title: "Pruned model saved", description: path });
+                  }}
+                  onError={(msg) => {
+                    toast({ title: "Pruning error", description: msg, variant: "destructive" });
+                  }}
+                />
+              </div>
+            )}
                 <ExportRunPanel
                   exportMethod={exportMethod}
                   quantLevels={quantLevels}
