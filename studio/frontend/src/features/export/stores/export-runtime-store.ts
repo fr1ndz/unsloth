@@ -8,6 +8,7 @@ import {
   exportGGUF,
   exportLoRA,
   exportMerged,
+  exportOneBit,
   getExportStatus,
   isRecoverableTransportError,
   loadCheckpoint,
@@ -517,6 +518,19 @@ export const useExportRuntimeStore = create<ExportRuntimeStore>()((set, get) => 
             label: params.loraGguf ? "GGUF LoRA adapter" : "LoRA adapter",
             path: outputPath,
           });
+        }
+      } else if (params.exportMethod === "1bit") {
+        const { outputPath } = await runRecoverableOp(() =>
+          exportOneBit({
+            save_directory: params.saveDirectory,
+            push_to_hub: pushToHub,
+            repo_id: params.repoId,
+            hf_token: params.token ?? params.loadToken ?? null,
+            private: params.privateRepo,
+          }),
+        );
+        if (outputPath) {
+          outputs.push({ label: "1-bit Bonsai", path: outputPath });
         }
       }
       if (!isCurrent()) return;

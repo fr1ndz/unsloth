@@ -40,6 +40,7 @@ from models import (
     ExportBaseModelRequest,
     ExportGGUFRequest,
     ExportLoRAAdapterRequest,
+    ExportOneBitRequest,
 )
 
 router = APIRouter()
@@ -467,6 +468,53 @@ async def export_lora_adapter(
         raise HTTPException(
             status_code = 500,
             detail = "Failed to export LoRA adapter",
+        )
+
+
+@router.post("/export/1bit", response_model=ExportOperationResponse)
+async def export_one_bit(
+    request: ExportOneBitRequest, current_subject: str = Depends(get_current_subject)
+):
+    """Post-training 1-bit ternary quantization (Bonsai format).
+
+    Converts the currently loaded model to ternary weights {-1, 0, +1} with
+    FP16 group scales. No training required — pure post-hoc conversion.
+    Wraps ExportBackend.export_1bit.
+    """
+    try:
+        _ensure_export_supported()
+        backend = get_export_backend()
+        success, message, output_path = await asyncio.to_thread(
+            backend.export_1bit,
+            save_directory=request.save_directory,
+            push_to_hub=request.push_to_hub,
+            repo_id=request.repo_id,
+            hf_token=request.hf_token,
+            private=request.private,
+            group_size=request.group_size,
+            sparsity_threshold=request.sparsity_threshold,
+            activation_aware=request.activation_aware,
+        )
+
+        if not success:
+            raise HTTPException(status_code=400, detail=message)
+
+        return ExportOperationResponse(
+            success=True,
+            message=message,
+            details=_export_details(output_path),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        from utils.transformers_version import SidecarSwapInProgress
+
+        if isinstance(e, SidecarSwapInProgress):
+            raise HTTPException(status_code=409, detail=str(e))
+        logger.error(f"Error exporting 1-bit model: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to export 1-bit model",
         )
 
 

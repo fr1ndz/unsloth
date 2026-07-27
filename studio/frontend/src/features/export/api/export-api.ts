@@ -195,6 +195,24 @@ export async function exportLoRA(params: {
   return parseJson<ExportOperationResponse>(response);
 }
 
+export async function exportOneBit(params: {
+  save_directory: string;
+  push_to_hub?: boolean;
+  repo_id?: string | null;
+  hf_token?: string | null;
+  private?: boolean;
+  group_size?: number;
+  sparsity_threshold?: number;
+  activation_aware?: boolean;
+}): Promise<ExportOperationResponse> {
+  const response = await authFetch("/api/export/export/1bit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return parseJson<ExportOperationResponse>(response);
+}
+
 export async function cleanupExport(): Promise<ExportOperationResponse> {
   const response = await authFetch("/api/export/cleanup", { method: "POST" });
   return parseJson<ExportOperationResponse>(response);

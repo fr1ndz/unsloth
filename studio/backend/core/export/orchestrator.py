@@ -585,6 +585,32 @@ class ExportOrchestrator:
             },
         )
 
+    def export_1bit(
+        self,
+        save_directory: str,
+        push_to_hub: bool = False,
+        repo_id: Optional[str] = None,
+        hf_token: Optional[str] = None,
+        private: bool = False,
+        group_size: int = 128,
+        sparsity_threshold: float = 0.0,
+        activation_aware: bool = True,
+    ) -> Tuple[bool, str, Optional[str]]:
+        """Post-training 1-bit ternary quantization (Bonsai format)."""
+        return self._run_export(
+            "1bit",
+            {
+                "save_directory": save_directory,
+                "push_to_hub": push_to_hub,
+                "repo_id": repo_id,
+                "hf_token": hf_token,
+                "private": private,
+                "group_size": group_size,
+                "sparsity_threshold": sparsity_threshold,
+                "activation_aware": activation_aware,
+            },
+        )
+
     def export_lora_adapter(
         self,
         save_directory: str,

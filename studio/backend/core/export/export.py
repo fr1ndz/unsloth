@@ -244,7 +244,7 @@ class ExportBackend:
             self.current_tokenizer = None
             self.current_checkpoint = None
             self._audio_type = None
-        self._training_type = None
+            self._training_type = None
 
             clear_gpu_cache()
 
@@ -1170,6 +1170,83 @@ class ExportBackend:
 
             logger.error(traceback.format_exc())
             return False, f"Adapter export failed: {str(e)}", None
+
+
+    def export_1bit(
+        self,
+        save_directory: str,
+        push_to_hub: bool = False,
+        repo_id: Optional[str] = None,
+        hf_token: Optional[str] = None,
+        private: bool = False,
+        group_size: int = 128,
+        sparsity_threshold: float = 0.0,
+        activation_aware: bool = True,
+    ) -> Tuple[bool, str, Optional[str]]:
+        """
+        Post-training 1-bit ternary quantization (Bonsai format).
+
+        Converts the currently loaded model to ternary weights {-1, 0, +1}
+        with FP16 group scales. No training required — pure post-hoc conversion.
+
+        Returns:
+            Tuple of (success: bool, message: str, output_path: Optional[str])
+        """
+        if not _export_runtime_available():
+            return False, _export_runtime_message(), None
+        if not self.current_model or not self.current_tokenizer:
+            return False, "No model loaded. Please select a checkpoint first.", None
+
+        output_path: Optional[str] = None
+        try:
+            from core.training.ternary_quantize import quantize_model_to_1bit
+
+            if save_directory:
+                save_directory = str(resolve_export_write_dir(save_directory))
+                logger.info(f"Exporting 1-bit ternary model to: {save_directory}")
+                ensure_dir(Path(save_directory))
+
+            logger.info(
+                f"Starting 1-bit quantization: group_size={group_size}, "
+                f"sparsity={sparsity_threshold}, activation_aware={activation_aware}"
+            )
+
+            quantize_model_to_1bit(
+                model=self.current_model,
+                tokenizer=self.current_tokenizer,
+                output_dir=save_directory,
+                group_size=group_size,
+                sparsity_threshold=sparsity_threshold,
+                activation_aware=activation_aware,
+            )
+            output_path = save_directory
+            logger.info(f"1-bit quantization complete: {save_directory}")
+
+            if push_to_hub and repo_id:
+                from huggingface_hub import HfApi
+                hf_api = HfApi(token=hf_token)
+                hf_api.create_repo(repo_id, private=private, exist_ok=True)
+                hf_api.upload_folder(
+                    folder_path=save_directory,
+                    repo_id=repo_id,
+                    repo_type="model",
+                )
+                logger.info(f"1-bit model pushed to {repo_id}")
+
+            return True, "1-bit ternary model exported successfully", output_path
+
+        except ImportError:
+            return (
+                False,
+                "Ternary quantization module not available. "
+                "Ensure core/training/ternary_quantize.py is present.",
+                None,
+            )
+        except Exception as e:
+            logger.error(f"Error exporting 1-bit model: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False, f"1-bit export failed: {str(e)}", None
 
 
 # Global export backend instance

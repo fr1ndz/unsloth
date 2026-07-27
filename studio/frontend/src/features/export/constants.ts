@@ -3,7 +3,7 @@
 
 import type { TrainingMethod } from "@/types/training";
 
-export type ExportMethod = "merged" | "lora" | "gguf";
+export type ExportMethod = "merged" | "lora" | "gguf" | "1bit";
 
 export const EXPORT_METHODS: {
   value: ExportMethod;
@@ -32,6 +32,14 @@ export const EXPORT_METHODS: {
     description: "Quantized formats for local AI runners.",
     tooltip:
       "Converts to GGUF for llama.cpp, Ollama, and other local runners. Pick a quantization level below.",
+  },
+  {
+    value: "1bit",
+    title: "1-bit Bonsai",
+    description: "Ternary weights {-1, 0, +1} with FP16 scales.",
+    tooltip:
+      "Post-training quantization to 1-bit ternary format compatible with Bonsai inference. ~8× compression with minimal quality loss.",
+    badge: "New",
   },
 ];
 
@@ -325,6 +333,10 @@ export function getEstimatedSize(
   if (method === "lora") {
     // Adapter size is bounded by LoRA rank, not the base model size.
     return "~100 MB";
+  }
+  if (method === "1bit") {
+    // 1-bit ternary: ~8× compression vs FP16 (2 bits/param + FP16 scales overhead)
+    return fp16Bytes && fp16Bytes > 0 ? `~${formatModelSize(fp16Bytes / 7)}` : "";
   }
   return "";
 }

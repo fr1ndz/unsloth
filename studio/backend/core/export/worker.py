@@ -405,6 +405,7 @@ def _handle_export(backend, cmd: dict, resp_queue: Any) -> None:
         "gguf": f"Exporting GGUF ({cmd.get('quantization_method', 'Q4_K_M')})...",
         "lora": "Exporting LoRA adapter...",
         "base": "Exporting base model...",
+        "1bit": "Quantizing to 1-bit ternary (Bonsai)...",
     }.get(export_type, f"Exporting ({export_type})...")
     _send_response(
         resp_queue,
@@ -450,6 +451,17 @@ def _handle_export(backend, cmd: dict, resp_queue: Any) -> None:
                 private = cmd.get("private", False),
                 gguf = cmd.get("gguf", False),
                 gguf_outtype = cmd.get("gguf_outtype", "q8_0"),
+            )
+        elif export_type == "1bit":
+            success, message, output_path = backend.export_1bit(
+                save_directory = cmd.get("save_directory", ""),
+                push_to_hub = cmd.get("push_to_hub", False),
+                repo_id = cmd.get("repo_id"),
+                hf_token = cmd.get("hf_token"),
+                private = cmd.get("private", False),
+                group_size = cmd.get("group_size", 128),
+                sparsity_threshold = cmd.get("sparsity_threshold", 0.0),
+                activation_aware = cmd.get("activation_aware", True),
             )
         else:
             success, message = False, f"Unknown export type: {export_type}"

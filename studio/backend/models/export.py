@@ -226,6 +226,27 @@ class ExportGGUFRequest(BaseModel):
     )
 
 
+class ExportOneBitRequest(ExportCommonOptions):
+    """Request for post-training 1-bit ternary quantization (Bonsai format)."""
+
+    group_size: int = Field(
+        128,
+        ge=32,
+        le=512,
+        description="Group size for FP16 scaling factors (default 128, matching Bonsai)",
+    )
+    sparsity_threshold: float = Field(
+        0.0,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of weights to zero out before ternary quantization",
+    )
+    activation_aware: bool = Field(
+        True,
+        description="Use activation-aware importance weighting (AWQ-style) for better accuracy",
+    )
+
+
 class ExportLoRAAdapterRequest(ExportCommonOptions):
     """Request for exporting only the LoRA adapter (not merged)."""
 

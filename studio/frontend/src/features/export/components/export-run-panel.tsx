@@ -178,7 +178,8 @@ export function ExportRunPanel(props: ExportRunPanelProps) {
     run.logLines.length > 0 ||
     panelMethod === "merged" ||
     panelMethod === "gguf" ||
-    panelMethod === "lora";
+    panelMethod === "lora" ||
+    panelMethod === "1bit";
 
   const elapsedSeconds = useElapsedSeconds(run.startedAt, isExporting);
 
