@@ -219,6 +219,17 @@ def _build_training_worker_config(values: dict[str, Any]) -> dict[str, Any]:
             config[key] = values.get(key)
     if config["training_type"] == "Full Finetuning":
         config["load_in_4bit"] = False
+    # 1-bit Quantize: post-training quantization, no training needed
+    if config["training_type"] == "1-bit Quantize":
+        config["load_in_4bit"] = False
+        config["use_lora"] = False
+        # Pass through ternary quantization params
+        for _qk in (
+            "ternary_group_size", "ternary_sparsity_threshold",
+            "ternary_activation_aware",
+        ):
+            if _qk in values:
+                config[_qk] = values[_qk]
     return config
 
 

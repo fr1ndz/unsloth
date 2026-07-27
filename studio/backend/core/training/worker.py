@@ -2931,46 +2931,53 @@ def run_training_process(*, event_queue: Any, stop_queue: Any, config: dict) -> 
         _send_status(event_queue, "Loading and formatting dataset...")
         hf_dataset = config.get("hf_dataset", "")
         training_type = config.get("training_type", "LoRA/QLoRA")
-        _is_cpt_for_dataset = training_type == "Continued Pretraining"
-        dataset_result = trainer.load_and_format_dataset(
-            dataset_source = hf_dataset if hf_dataset and hf_dataset.strip() else None,
-            format_type = config.get("format_type", ""),
-            local_datasets = config.get("local_datasets") or None,
-            local_eval_datasets = config.get("local_eval_datasets") or None,
-            custom_format_mapping = config.get("custom_format_mapping"),
-            subset = config.get("subset"),
-            train_split = config.get("train_split", "train"),
-            eval_split = config.get("eval_split"),
-            dataset_streaming = config.get("dataset_streaming", False),
-            eval_steps = config.get("eval_steps", 0.00),
-            dataset_slice_start = config.get("dataset_slice_start"),
-            dataset_slice_end = config.get("dataset_slice_end"),
-            is_cpt = _is_cpt_for_dataset,
-            s3_config = config.get("s3_config"),
-        )
 
-        if isinstance(dataset_result, tuple):
-            dataset, eval_dataset = dataset_result
+        # ── 4b-skip. Post-training quantization needs no dataset ──
+        if training_type == "1-bit Quantize":
+            _send_status(event_queue, "Skipping dataset (post-training quantization)...")
+            dataset = None
+            eval_dataset = None
         else:
-            dataset = dataset_result
-            eval_dataset = None
-
-        # Disable eval if eval_steps <= 0
-        eval_steps = config.get("eval_steps", 0.00)
-        if eval_steps is not None and float(eval_steps) <= 0:
-            eval_dataset = None
-
-        # Tell the parent eval is configured so the frontend shows
-        # "Waiting for first evaluation step..." instead of "not configured".
-        if eval_dataset is not None:
-            event_queue.put(
-                {
-                    "type": "eval_configured",
-                    "ts": time.time(),
-                }
+            _is_cpt_for_dataset = training_type == "Continued Pretraining"
+            dataset_result = trainer.load_and_format_dataset(
+                dataset_source = hf_dataset if hf_dataset and hf_dataset.strip() else None,
+                format_type = config.get("format_type", ""),
+                local_datasets = config.get("local_datasets") or None,
+                local_eval_datasets = config.get("local_eval_datasets") or None,
+                custom_format_mapping = config.get("custom_format_mapping"),
+                subset = config.get("subset"),
+                train_split = config.get("train_split", "train"),
+                eval_split = config.get("eval_split"),
+                dataset_streaming = config.get("dataset_streaming", False),
+                eval_steps = config.get("eval_steps", 0.00),
+                dataset_slice_start = config.get("dataset_slice_start"),
+                dataset_slice_end = config.get("dataset_slice_end"),
+                is_cpt = _is_cpt_for_dataset,
+                s3_config = config.get("s3_config"),
             )
 
-        if dataset is None or trainer.should_stop:
+            if isinstance(dataset_result, tuple):
+                dataset, eval_dataset = dataset_result
+            else:
+                dataset = dataset_result
+                eval_dataset = None
+
+            # Disable eval if eval_steps <= 0
+            eval_steps = config.get("eval_steps", 0.00)
+            if eval_steps is not None and float(eval_steps) <= 0:
+                eval_dataset = None
+
+            # Tell the parent eval is configured so the frontend shows
+            # "Waiting for first evaluation step..." instead of "not configured".
+            if eval_dataset is not None:
+                event_queue.put(
+                    {
+                        "type": "eval_configured",
+                        "ts": time.time(),
+                    }
+                )
+
+        if (dataset is None and training_type != "1-bit Quantize") or trainer.should_stop:
             if trainer.should_stop:
                 event_queue.put({"type": "complete", "output_dir": None, "ts": time.time()})
             else:
@@ -3066,6 +3073,92 @@ def run_training_process(*, event_queue: Any, stop_queue: Any, config: dict) -> 
                     }
                 )
             return
+
+        # ── 4c½. POST-TRAINING 1-BIT QUANTIZATION FAST-PATH ──
+        # No training, no dataset — just quantize and save.
+        _is_1bit_quantize = training_type == "1-bit Quantize"
+        if _is_1bit_quantize:
+            _send_status(event_queue, "Starting post-training 1-bit quantization...")
+            try:
+                from core.training.ternary_quantize import (
+                    quantize_model_to_1bit,
+                    QuantizationConfig,
+                )
+
+                _q_output_dir = config.get("output_dir") or build_default_output_dir_name(
+                    model_name, "1bit-quantize"
+                )
+                _q_group_size = config.get("ternary_group_size", 128)
+                _q_threshold = config.get("ternary_sparsity_threshold", 0.0)
+                _q_use_awq = config.get("ternary_activation_aware", True)
+
+                _q_config = QuantizationConfig(
+                    group_size=_q_group_size,
+                    sparsity_threshold=_q_threshold,
+                    use_activation_awareness=_q_use_awq,
+                )
+
+                def _q_progress(msg, frac):
+                    _send_status(event_queue, f"[1-bit] {msg}")
+                    event_queue.put({
+                        "type": "progress",
+                        "step": 0,
+                        "epoch": 0,
+                        "loss": None,
+                        "learning_rate": 0,
+                        "total_steps": 1,
+                        "elapsed_seconds": 0,
+                        "eta_seconds": 0,
+                        "grad_norm": None,
+                        "num_tokens": 0,
+                        "eval_loss": None,
+                        "status_message": f"[1-bit] {msg}",
+                        "ts": time.time(),
+                    })
+
+                # Get the actual model from trainer
+                _q_model = getattr(trainer, "model", None) or model
+                _q_tokenizer = getattr(trainer, "tokenizer", None) or tokenizer
+
+                _result = quantize_model_to_1bit(
+                    model=_q_model,
+                    tokenizer=_q_tokenizer,
+                    output_dir=_q_output_dir,
+                    config=_q_config,
+                    progress_callback=_q_progress,
+                )
+
+                if _result.success:
+                    _s = _result.stats
+                    logger.info(
+                        f"[1-bit] Quantization complete: {_s.layers_quantized} layers, "
+                        f"{_s.compression_ratio:.1f}× compression, "
+                        f"{_s.zero_fraction:.1%} sparsity, "
+                        f"{_s.elapsed_seconds:.1f}s"
+                    )
+                    event_queue.put({
+                        "type": "complete",
+                        "output_dir": _q_output_dir,
+                        "ts": time.time(),
+                    })
+                else:
+                    event_queue.put({
+                        "type": "error",
+                        "error": _result.error or "Quantization failed",
+                        "stack": "",
+                        "ts": time.time(),
+                    })
+                return
+
+            except Exception as _q_exc:
+                logger.error(f"[1-bit] Quantization error: {_q_exc}")
+                event_queue.put({
+                    "type": "error",
+                    "error": f"1-bit quantization failed: {_q_exc}",
+                    "stack": traceback.format_exc(limit=10),
+                    "ts": time.time(),
+                })
+                return
 
         # ── 4d. Prepare model (LoRA, full finetuning, or CPT) ──
         if is_cpt:
@@ -3506,43 +3599,98 @@ def _run_embedding_training(event_queue: Any, stop_queue: Any, config: dict) -> 
         event_queue.put({"type": "complete", "output_dir": None, "ts": time.time()})
         return
 
-    # -- 3.5 Register ternary STE hooks for 1-bit training --
-    _is_onebit = training_type in ("1-bit LoRA", "1-bit QLoRA", "1-bit LOFTQ", "1-bit Full Finetuning")
+    # -- 3.5 Register enhanced ternary STE hooks for 1-bit/Bonsai training --
+    _is_onebit = training_type in ("1-bit LoRA", "1-bit QLoRA", "1-bit LOFTQ", "1-bit Full Finetuning", "Bonsai LoRA")
+    _ternary_manager = None
     if _is_onebit:
         import torch
+        try:
+            from core.training.ternary_enhanced import TernaryTrainingManager
+            _is_full_ft = training_type == "1-bit Full Finetuning"
+            _group_size = config.get("ternary_group_size", 128)
+            _lambda_anchor = config.get("ternary_lambda_anchor", 0.01)
+            _initial_threshold = config.get("ternary_initial_threshold", 0.0)
+            _threshold_schedule = config.get("ternary_threshold_schedule", "cosine")
 
-        class TernarySTE(torch.autograd.Function):
-            """Straight-Through Estimator for ternary weights {-1, 0, +1}."""
-            @staticmethod
-            def forward(ctx, weight):
-                return weight.sign().to(weight.dtype)
-            @staticmethod
-            def backward(ctx, grad_output):
-                return grad_output
+            _ternary_manager = TernaryTrainingManager(
+                model,
+                group_size=_group_size,
+                lambda_anchor=_lambda_anchor,
+                initial_threshold=_initial_threshold,
+                threshold_schedule=_threshold_schedule,
+            )
 
-        def _register_ternary_hooks(mdl, is_full_ft=False):
-            hooks = []
-            for name, module in mdl.named_modules():
-                # For LoRA methods: only ternarize adapter layers
-                # For full finetuning: ternarize ALL linear layers
+            # Collect weight stats immediately (no calibration dataloader needed for weights)
+            for _name, _module in model.named_modules():
+                if isinstance(_module, torch.nn.Linear):
+                    if _is_full_ft or "lora_" in _name:
+                        _ternary_manager.stats.collect_weight_stats(_name, _module.weight.data)
+            _ternary_manager.stats.mark_calibrated()
+
+            # Register enhanced hooks
+            _ternary_hooks_list = []
+            for _name, _module in model.named_modules():
                 is_target = (
-                    isinstance(module, torch.nn.Linear)
-                    and (is_full_ft or "lora_" in name)
+                    isinstance(_module, torch.nn.Linear)
+                    and (_is_full_ft or "lora_" in _name)
                 )
                 if is_target:
-                    def make_hook(mod):
-                        def hook_fn(m, inp):
-                            with torch.no_grad():
-                                m.weight.data = TernarySTE.apply(m.weight.data)
-                            return inp
-                        return hook_fn
-                    h = module.register_forward_pre_hook(make_hook(module))
-                    hooks.append(h)
-            return hooks
+                    _hook = _module.register_forward_pre_hook(
+                        _ternary_manager._make_ternary_hook(_name, _module)
+                    )
+                    _ternary_hooks_list.append(_hook)
 
-        _is_full_ft = training_type == "1-bit Full Finetuning"
-        _ternary_hooks = _register_ternary_hooks(model, is_full_ft=_is_full_ft)
-        logger.info(f"[1-bit] Registered {len(_ternary_hooks)} ternary STE hooks for {training_type}")
+            logger.info(
+                f"[1-bit] Registered {len(_ternary_hooks_list)} enhanced ternary STE hooks "
+                f"for {training_type} (group_size={_group_size}, λ_anchor={_lambda_anchor})"
+            )
+        except ImportError:
+            # Fallback to basic TernarySTE if enhanced module unavailable
+            logger.warning("[1-bit] ternary_enhanced not found, falling back to basic TernarySTE")
+
+            class TernarySTE(torch.autograd.Function):
+                """Straight-Through Estimator for ternary weights {-1, 0, +1}."""
+                @staticmethod
+                def forward(ctx, weight):
+                    return weight.sign().to(weight.dtype)
+                @staticmethod
+                def backward(ctx, grad_output):
+                    return grad_output
+
+            def _register_ternary_hooks(mdl, is_full_ft=False):
+                hooks = []
+                for name, module in mdl.named_modules():
+                    is_target = (
+                        isinstance(module, torch.nn.Linear)
+                        and (is_full_ft or "lora_" in name)
+                    )
+                    if is_target:
+                        def make_hook(mod):
+                            def hook_fn(m, inp):
+                                with torch.no_grad():
+                                    m.weight.data = TernarySTE.apply(m.weight.data)
+                                return inp
+                            return hook_fn
+                        h = module.register_forward_pre_hook(make_hook(module))
+                        hooks.append(h)
+                return hooks
+
+            _is_full_ft = training_type == "1-bit Full Finetuning"
+            _ternary_hooks = _register_ternary_hooks(model, is_full_ft=_is_full_ft)
+            logger.info(f"[1-bit] Registered {len(_ternary_hooks)} basic ternary STE hooks for {training_type}")
+
+        # Register enhanced ternary callback for spectral loss + gradient clipping
+        if _ternary_manager is not None:
+            try:
+                from core.training.ternary_enhanced import TernaryTrainerCallback
+                _total_epochs = config.get("num_train_epochs", 100)
+                _ternary_callback = TernaryTrainerCallback(
+                    _ternary_manager, model, total_epochs=_total_epochs
+                )
+                trainer.add_progress_callback(_ternary_callback.on_progress)
+                logger.info("[1-bit] Registered TernaryTrainerCallback for spectral anchor + adaptive clipping")
+            except Exception as _e:
+                logger.warning(f"[1-bit] Failed to register ternary callback: {_e}")
 
     # ── 4. Load dataset ──
     _send_status(event_queue, "Loading dataset...")
