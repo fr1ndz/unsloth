@@ -53,6 +53,7 @@ import {
 import { useDebouncedValue, useHfTokenValidation } from "@/hooks";
 import { useHardwareInfo } from "@/hooks/use-hardware-info";
 import { ChevronDownStandardIcon } from "@/lib/chevron-icons";
+import { PruningPanel } from "./components/pruning-panel";
 import {
   AlertCircleIcon,
   FolderSearchIcon,
@@ -69,7 +70,6 @@ import { useShallow } from "zustand/react/shallow";
 import type { ModelCheckpoints } from "./api/export-api";
 import { fetchCheckpoints } from "./api/export-api";
 import { ExportRunPanel } from "./components/export-run-panel";
-import { PruningPanel } from "./components/pruning-panel";
 import { MethodPicker } from "./components/method-picker";
 import { QuantPicker } from "./components/quant-picker";
 import {
