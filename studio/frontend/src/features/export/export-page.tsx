@@ -58,9 +58,7 @@ import {
   FolderSearchIcon,
   InformationCircleIcon,
   Key01Icon,
-  MoreHorizontalIcon,
-  Package01Icon,
-  Scissor01Icon,
+  PackageIcon,
   Search01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -69,7 +67,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { ModelCheckpoints } from "./api/export-api";
 import { ExportRunPanel } from "./components/export-run-panel";
-import { PruningPanel } from "./components/pruning-panel";
 import { MethodPicker } from "./components/method-picker";
 import { QuantPicker } from "./components/quant-picker";
 import {
@@ -530,11 +527,623 @@ export function ExportPage() {
   useEffect(() => {
     if (sourceMode !== "checkpoint") return;
     if (checkpoint != null || checkpointsForModel.length === 0) return;
-    setCheckpoint(checkpointsForMo
+    setCheckpoint(checkpointsForModel[0].display_name);
+  }, [sourceMode, selectedModelIdx, checkpoint, checkpointsForModel]);
 
-... [OUTPUT TRUNCATED - 24,230 chars omitted out of 74,157 total] ...
+  // Auto-reset export method if incompatible with the selected model type
+  useEffect(() => {
+    // Only LoRA needs a real adapter; Merged and GGUF work for non-PEFT base models too.
+    if (!effectiveIsAdapter && exportMethod === "lora") {
+      setExportMethod(null);
+    }
+    // Quantized non-PEFT models can't export to any format
+    if (!effectiveIsAdapter && effectiveIsQuantized && exportMethod !== null) {
+      setExportMethod(null);
+    }
+    // The GGUF LoRA target only applies to an adapter checkpoint on a non-Mac host.
+    if ((!effectiveIsAdapter || isMacHost) && ggufTarget !== "model") {
+      setGgufTarget("model");
+    }
+  }, [
+    effectiveIsAdapter,
+    effectiveIsQuantized,
+    exportMethod,
+    isMacHost,
+    ggufTarget,
+  ]);
 
-            icon={Search01Icon}
+  const handleSourceTabChange = useCallback((next: string) => {
+    if (next === "checkpoint") {
+      setSourceMode("checkpoint");
+    } else if (next === "hf" || next === "local") {
+      setSourceMode("model");
+      setModelSource(next);
+      // Don't force GGUF: Local / HF sources can export Merged too; a stale LoRA pick auto-resets.
+    } else {
+      return;
+    }
+    setSelectedSourceModel(null);
+    setLocalModelInput("");
+    setModelInput("");
+    hfModelInputRef.current = "";
+    localModelInputRef.current = "";
+  }, []);
+
+  useEffect(() => {
+    setSelectedSourceModel(null);
+    setLocalModelInput("");
+    setModelInput("");
+  }, [modelSource]);
+
+  useEffect(() => {
+    hfModelInputRef.current = modelInput;
+  }, [modelInput]);
+
+  useEffect(() => {
+    localModelInputRef.current = localModelInput;
+  }, [localModelInput]);
+
+  const handleMethodChange = (method: ExportMethod) => {
+    setExportMethod(method);
+    if (method !== "gguf") {
+      setQuantLevels([]);
+    }
+  };
+
+  const estimatedSize = getEstimatedSize(exportMethod, quantLevels, fp16Bytes);
+  const selectedExportSource =
+    sourceMode === "checkpoint" ? checkpoint : selectedSourceModel;
+  const defaultSaveDirectory = useMemo(() => {
+    const relative = buildRelativeSaveDirectory(
+      exportMethod,
+      sourceMode,
+      sourceBaseModelName,
+      selectedModelIdx,
+      checkpoint,
+    );
+    if (
+      exportMethod === "gguf" &&
+      sourceMode === "model" &&
+      modelSource === "local" &&
+      selectedSourceModel
+    ) {
+      const localModel = localMetaById.get(selectedSourceModel);
+      if (
+        localModel &&
+        (localModel.source === "models_dir" || localModel.source === "custom")
+      ) {
+        return siblingGgufDirectory(localModel.path) ?? relative;
+      }
+    }
+    return relative;
+  }, [
+    checkpoint,
+    exportMethod,
+    localMetaById,
+    modelSource,
+    selectedModelIdx,
+    selectedSourceModel,
+    sourceBaseModelName,
+    sourceMode,
+  ]);
+  const saveDirectory = customSaveDirectory?.trim() || defaultSaveDirectory;
+  // Each merged format uploads a full model to the repo root, so several to one repo would collide.
+  // GGUF method exporting an adapter checkpoint as a GGUF LoRA (vs full-model quants). Reuses the
+  // LoRA-adapter export path; no quant list needed.
+  const ggufAsLora =
+    exportMethod === "gguf" &&
+    ggufTarget === "lora" &&
+    effectiveIsAdapter &&
+    !isMacHost;
+
+  // Restrict a Hub merged export to a single format; multi-format stays available for local export.
+  const hubMultiFormat =
+    destination === "hub" &&
+    exportMethod === "merged" &&
+    selectedFormats.length > 1;
+
+  const canExport = !!(
+    selectedExportSource &&
+    exportMethod &&
+    !exportUnsupported &&
+    !hubMultiFormat &&
+    (exportMethod !== "gguf" || ggufAsLora || quantLevels.length > 0) &&
+    (exportMethod !== "merged" || selectedFormats.length > 0)
+  );
+
+  const applyHfSourceModel = useCallback((value: string) => {
+    const next = value.trim();
+    setModelInput(next);
+    setSelectedSourceModel(next || null);
+  }, []);
+
+  const handleHfSourceModelSelect = useCallback((id: string | null) => {
+    selectingHfModelRef.current = true;
+    const next = id ?? "";
+    hfModelInputRef.current = next;
+    setModelInput(next);
+    setSelectedSourceModel(id);
+  }, []);
+
+  const handleHfSourceInputChange = useCallback(
+    (value: string, eventDetails?: { reason?: string }) => {
+      hfModelInputRef.current = value;
+      if (selectingHfModelRef.current) {
+        selectingHfModelRef.current = false;
+        return;
+      }
+      if (!SEARCH_INPUT_REASONS.has(eventDetails?.reason ?? "")) {
+        return;
+      }
+      setModelInput(value);
+      if (value.trim() === "") {
+        setSelectedSourceModel(null);
+      }
+    },
+    [],
+  );
+
+  const applyLocalSourceModel = useCallback((value: string) => {
+    const next = value.trim();
+    setLocalModelInput(next);
+    setSelectedSourceModel(next || null);
+  }, []);
+
+  useEffect(() => {
+    setCustomSaveDirectory(null);
+  }, [
+    checkpoint,
+    exportMethod,
+    modelSource,
+    selectedModelIdx,
+    selectedSourceModel,
+    sourceMode,
+  ]);
+
+  const handleLocalSourceInputChange = useCallback(
+    (value: string, eventDetails?: { reason?: string }) => {
+      localModelInputRef.current = value;
+      if (!SEARCH_INPUT_REASONS.has(eventDetails?.reason ?? "")) {
+        return;
+      }
+      setLocalModelInput(value);
+      if (value.trim() === "") {
+        setSelectedSourceModel(null);
+      }
+    },
+    [],
+  );
+
+  // ---- Export handlers ----
+  // Assemble the run params from the current form and hand off to the global
+  // runtime store, which drives load -> export -> cleanup in the background.
+  const handleStart = useCallback(async () => {
+    const source =
+      sourceMode === "checkpoint" ? checkpoint : selectedSourceModel;
+    if (!source || !exportMethod) return;
+    // No supported accelerator (or PyTorch/MLX missing): the backend would reject anyway; don't submit.
+    if (exportUnsupported) return;
+    // GGUF with no quant, or merged with no format, would run an unintended/empty export; require
+    // at least one (mirrors canExport, in case the panel's Start button bypasses the outer one).
+    if (exportMethod === "gguf" && !ggufAsLora && quantLevels.length === 0)
+      return;
+    if (exportMethod === "merged" && selectedFormats.length === 0) return;
+    // A Hub merged push writes each format to the repo root; several would collide (mirrors canExport).
+    if (hubMultiFormat) return;
+
+    const selectedCp =
+      sourceMode === "checkpoint"
+        ? checkpointsForModel.find((cp) => cp.display_name === checkpoint)
+        : null;
+    if (sourceMode === "checkpoint" && !selectedCp) return;
+    const checkpointPath = selectedCp?.path ?? null;
+
+    const pushToHub = destination === "hub";
+    const preparedToken = await prepareHfTokenForUse(hfToken, {
+      allowAnonymous: !pushToHub,
+    });
+    if (!preparedToken.proceed) return;
+    const actionHfToken = preparedToken.token ?? "";
+
+    const repoId =
+      pushToHub && hfUsername && modelName
+        ? `${hfUsername}/${modelName}`
+        : undefined;
+    const token = pushToHub && actionHfToken ? actionHfToken : undefined;
+    // The GGUF method with the LoRA target reuses the LoRA-adapter export path.
+    const effectiveMethod: ExportMethod = ggufAsLora ? "lora" : exportMethod;
+    const emitLoraGguf =
+      ggufAsLora || (effectiveMethod === "lora" && loraAsGguf && !isMacHost);
+    const methodLabel = ggufAsLora
+      ? "GGUF LoRA adapter"
+      : (EXPORT_METHODS.find((m) => m.value === exportMethod)?.title ??
+        exportMethod);
+    const adapterExport = sourceMode === "checkpoint" && isAdapter;
+
+    // Consent gate for an HF source's custom (auto_map) code, run before we hand
+    // off to runExport (which performs the load in the background). A local
+    // checkpoint/model the user exported is trusted by default.
+    let trustRemoteCode = modelSource !== "hf";
+    let approvedRemoteCodeFingerprint: string | null = null;
+    if (sourceMode !== "checkpoint") {
+      const remoteCodeOk = await confirmRemoteCodeIfNeeded({
+        modelName: source,
+        hfToken: actionHfToken || null,
+        // An HF source can need trust_remote_code via its YAML default with no
+        // auto_map to review; signal it so a YAML-only model does not export
+        // with it false.
+        requiresTrustRemoteCode: modelSource === "hf",
+        onApprove: (fingerprint) => {
+          trustRemoteCode = true;
+          approvedRemoteCodeFingerprint = fingerprint;
+        },
+      });
+      if (!remoteCodeOk) return;
+    }
+
+    void runExport({
+      sourceMode,
+      checkpointPath,
+      source,
+      modelSource,
+      trustRemoteCode,
+      approvedRemoteCodeFingerprint,
+      loadToken: actionHfToken || null,
+      exportMethod: effectiveMethod,
+      isAdapter: adapterExport,
+      quantLevels,
+      useImatrix: effectiveImatrix,
+      mergedSelections: selectedFormats.map((v) => ({
+        ...mergedFormatPayload(v),
+        label: MERGED_FORMATS.find((f) => f.value === v)?.label ?? v,
+      })),
+      loraGguf: emitLoraGguf,
+      loraGgufOuttype,
+      saveDirectory,
+      destination,
+      repoId,
+      token,
+      privateRepo,
+      baseModelId: selectedModelData?.base_model ?? undefined,
+      summary: {
+        baseModelName: sourceBaseModelName,
+        checkpointLabel: selectedExportSource,
+        methodLabel,
+        method: effectiveMethod,
+        quantLevels,
+        mergedFormats: exportMethod === "merged" ? selectedFormats : [],
+        destination,
+      },
+    });
+  }, [
+    checkpoint,
+    checkpointsForModel,
+    sourceMode,
+    selectedSourceModel,
+    selectedModelData,
+    selectedExportSource,
+    sourceBaseModelName,
+    exportMethod,
+    isAdapter,
+    quantLevels,
+    effectiveImatrix,
+    selectedFormats,
+    hubMultiFormat,
+    ggufAsLora,
+    loraAsGguf,
+    isMacHost,
+    loraGgufOuttype,
+    exportUnsupported,
+    destination,
+    saveDirectory,
+    hfUsername,
+    modelName,
+    hfToken,
+    privateRepo,
+    modelSource,
+    runExport,
+  ]);
+
+  // Open the inline panel into a fresh config state. Clears any previous
+  // terminal run (a still-running export cannot be cleared, so it stays).
+  const handleOpenPanel = useCallback(() => {
+    if (!isExporting) {
+      resetExportRun();
+    }
+    setPanelOpen(true);
+  }, [isExporting, resetExportRun]);
+
+  // Collapse the panel. Only reachable from config / terminal states (never
+  // mid-run), so resetting the store back to idle is safe.
+  const handleClosePanel = useCallback(() => {
+    resetExportRun();
+    setPanelOpen(false);
+  }, [resetExportRun]);
+
+  const showPanel = panelOpen || panelActive;
+
+  // Bring the panel into view when it opens and offer a scroll-down affordance
+  // (like Chat) when its end is below the fold.
+  const panelEndRef = useRef<HTMLDivElement>(null);
+  const [panelEndVisible, setPanelEndVisible] = useState(true);
+
+  useEffect(() => {
+    if (!showPanel) return;
+    const id = window.setTimeout(() => {
+      panelEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }, 60);
+    return () => window.clearTimeout(id);
+  }, [showPanel]);
+
+  useEffect(() => {
+    const el = panelEndRef.current;
+    if (!showPanel || !el) return;
+    // The scroll-down button is also gated on showPanel, so there is no need to
+    // reset visibility when the panel closes; the observer self-corrects on open.
+    const obs = new IntersectionObserver(
+      ([entry]) => setPanelEndVisible(entry.isIntersecting),
+      { rootMargin: "0px 0px -40px 0px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [showPanel]);
+
+  // ---- Render ----
+  return (
+    <div className="min-h-[calc(100dvh-var(--studio-titlebar-height,0px))] bg-background">
+      <main className="mx-auto max-w-7xl px-5 py-8 sm:px-9">
+        <GuidedTour {...tour.tourProps} />
+
+        <div className="mb-8 flex flex-col gap-0.5">
+          <h1 className="text-ui-30 font-semibold leading-[1.04] tracking-[-0.028em] text-foreground sm:text-ui-34">
+            Export Model
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Export fine-tuned or base models for deployment
+          </p>
+        </div>
+
+        <SectionCard
+          icon={<HugeiconsIcon icon={PackageIcon} className="size-5" />}
+          title="Export Configuration"
+          description="Select source, method, and quantization"
+          accent="emerald"
+          featured={true}
+          className="ring-0 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.16)] dark:shadow-none"
+        >
+          {/* Loading / error states */}
+          {loadingCheckpoints && (
+            <div className="flex items-center gap-2 py-6 justify-center text-sm text-muted-foreground">
+              <Spinner className="size-4" />
+              Loading checkpoints…
+            </div>
+          )}
+
+          {checkpointError && (
+            <div className="flex items-center gap-2 py-6 justify-center text-sm text-destructive">
+              <HugeiconsIcon icon={AlertCircleIcon} className="size-4" />
+              {checkpointError}
+            </div>
+          )}
+
+          {!loadingCheckpoints && !checkpointError && (
+            <>
+              {/* Top row: Dropdowns + metadata | Guide */}
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-8">
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-2">
+                    <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                      Source
+                      <Tooltip>
+                        <TooltipTrigger asChild={true}>
+                          <button
+                            type="button"
+                            className="text-foreground/70 hover:text-foreground"
+                          >
+                            <HugeiconsIcon
+                              icon={InformationCircleIcon}
+                              className="size-3"
+                            />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          Choose a local model, fine-tuned checkpoint, or
+                          Hugging Face model to export.
+                        </TooltipContent>
+                      </Tooltip>
+                    </label>
+                    <Tabs
+                      value={sourceTab}
+                      onValueChange={handleSourceTabChange}
+                      className="w-full"
+                    >
+                      <TabsList
+                        unstyled={true}
+                        className="hub-menu-trigger hub-tab-toggle relative inline-flex h-9 w-full items-center rounded-full"
+                      >
+                        <TabsTrigger
+                          value="local"
+                          indicatorClassName="hub-tab-toggle-pill rounded-full"
+                          className="h-9 rounded-full border-0 px-3 text-ui-12p5 text-muted-foreground hover:text-foreground data-active:text-foreground data-[state=active]:text-foreground"
+                        >
+                          Local Model
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="checkpoint"
+                          indicatorClassName="hub-tab-toggle-pill rounded-full"
+                          className="h-9 rounded-full border-0 px-3 text-ui-12p5 text-muted-foreground hover:text-foreground data-active:text-foreground data-[state=active]:text-foreground"
+                        >
+                          Fine-tuned
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="hf"
+                          indicatorClassName="hub-tab-toggle-pill rounded-full"
+                          className="h-9 rounded-full border-0 px-3 text-ui-12p5 text-muted-foreground hover:text-foreground data-active:text-foreground data-[state=active]:text-foreground"
+                        >
+                          Hugging Face
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                  </div>
+
+                  {sourceMode === "checkpoint" ? (
+                    <div className="flex flex-col gap-2 overflow-visible">
+                      <div
+                        data-tour="export-training-run"
+                        className="flex flex-col gap-2"
+                      >
+                        <label className="text-xs font-medium text-muted-foreground">
+                          Training Run
+                        </label>
+                        <Select
+                          value={selectedModelIdx ?? ""}
+                          onValueChange={setSelectedModelIdx}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue
+                              placeholder={
+                                models.length === 0
+                                  ? "No training runs found"
+                                  : "Select a training run…"
+                              }
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {models.map((m) => {
+                              const tsMatch = m.name.match(/_(\d{10,})$/);
+                              const displayName = tsMatch
+                                ? m.name.slice(0, tsMatch.index)
+                                : m.name;
+                              const timeStr = tsMatch
+                                ? new Date(
+                                    Number(tsMatch[1]) * 1000,
+                                  ).toLocaleString(undefined, {
+                                    dateStyle: "medium",
+                                    timeStyle: "short",
+                                  })
+                                : null;
+                              return (
+                                <SelectItem key={m.name} value={m.name}>
+                                  <span className="flex items-center gap-2">
+                                    {displayName}
+                                    <span className="text-muted-foreground text-xs">
+                                      {m.checkpoints.length} checkpoint
+                                      {m.checkpoints.length !== 1 ? "s" : ""}
+                                    </span>
+                                    {timeStr && (
+                                      <span className="text-muted-foreground text-xs">
+                                        · {timeStr}
+                                      </span>
+                                    )}
+                                  </span>
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div
+                        data-tour="export-checkpoint"
+                        className="flex flex-col gap-2"
+                      >
+                        <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                          Checkpoint
+                          <Tooltip>
+                            <TooltipTrigger asChild={true}>
+                              <button
+                                type="button"
+                                className="text-foreground/70 hover:text-foreground"
+                              >
+                                <HugeiconsIcon
+                                  icon={InformationCircleIcon}
+                                  className="size-3"
+                                />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              Choose a saved checkpoint to export. Lower loss
+                              generally means better quality.{" "}
+                              <a
+                                href="https://unsloth.ai/docs/basics/inference-and-deployment"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-primary underline"
+                              >
+                                Read more
+                              </a>
+                            </TooltipContent>
+                          </Tooltip>
+                        </label>
+                        <Select
+                          value={checkpoint ?? ""}
+                          onValueChange={setCheckpoint}
+                          disabled={!selectedModelIdx}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue
+                              placeholder={
+                                selectedModelIdx
+                                  ? checkpointsForModel.length === 0
+                                    ? "No checkpoints found"
+                                    : "Select a checkpoint…"
+                                  : "Select a training run first"
+                              }
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {checkpointsForModel.map((cp) => (
+                              <SelectItem key={cp.path} value={cp.display_name}>
+                                <span className="flex items-center gap-2">
+                                  {cp.display_name}
+                                  {cp.loss != null && (
+                                    <span className="text-muted-foreground text-xs">
+                                      loss: {cp.loss.toFixed(4)}
+                                    </span>
+                                  )}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2 overflow-visible">
+                      {modelSource === "hf" ? (
+                        <>
+                          <div className="flex flex-col gap-2">
+                            <label className="text-xs font-medium text-muted-foreground">
+                              Hugging Face Model
+                            </label>
+                            <div ref={hfComboboxAnchorRef}>
+                              <Combobox
+                                items={hfResultIds}
+                                filteredItems={hfResultIds}
+                                filter={null}
+                                value={
+                                  modelInput || selectedSourceModel || null
+                                }
+                                onValueChange={handleHfSourceModelSelect}
+                                onInputValueChange={handleHfSourceInputChange}
+                                itemToStringValue={(id) => id}
+                                autoHighlight={true}
+                              >
+                                <ComboboxInput
+                                  placeholder="Search models..."
+                                  className="w-full"
+                                  onBlur={() =>
+                                    applyHfSourceModel(hfModelInputRef.current)
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key !== "Enter") return;
+                                    event.preventDefault();
+                                    applyHfSourceModel(hfModelInputRef.current);
+                                  }}
+                                >
+                                  <InputGroupAddon>
+                                    <HugeiconsIcon
+                                      icon={Search01Icon}
                                       className="size-4"
                                     />
                                   </InputGroupAddon>
