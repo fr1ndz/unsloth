@@ -656,7 +656,52 @@ class _MLXTrainerAdapter:
                             not self.training_progress.error
                             and not self.training_progress.is_completed
                         ):
-                            self.training_progress.error = "Training process exited unexpectedly"
+                            # Diagnose WHY the worker died instead of a blind message.
+                            exitcode = getattr(self, "_proc", None)
+                            exitcode = exitcode.exitcode if exitcode is not None else None
+                            diag_parts = ["Training process exited unexpectedly"]
+                            if exitcode is not None:
+                                diag_parts.append(f"(exit code {exitcode})")
+                                if exitcode < 0:
+                                    import signal as _sig
+                                    sig_name = None
+                                    try:
+                                        sig_name = _sig.Signals(-exitcode).name
+                                    except (ValueError, AttributeError):
+                                        pass
+                                    if sig_name:
+                                        diag_parts.append(f"killed by {sig_name}")
+                                    if -exitcode in (9, 15):
+                                        diag_parts.append(
+                                            "— likely OOM or external kill; "
+                                            "reduce batch_size/max_seq_length or free VRAM"
+                                        )
+                                    elif -exitcode == 6:
+                                        diag_parts.append(
+                                            "— SIGABRT; likely CUDA/driver error or assertion failure"
+                                        )
+                                    elif -exitcode == 11:
+                                        diag_parts.append(
+                                            "— SIGSEGV; likely native extension crash or memory corruption"
+                                        )
+                                elif exitcode == 1:
+                                    diag_parts.append(
+                                        "— generic error; check logs above for Python traceback"
+                                    )
+                                elif exitcode == 137:
+                                    diag_parts.append(
+                                        "— killed (OOM killer or manual stop); reduce memory usage"
+                                    )
+                                elif exitcode == 139:
+                                    diag_parts.append(
+                                        "— segfault; update GPU drivers or reduce batch size"
+                                    )
+                            else:
+                                diag_parts.append("(exit code unavailable)")
+                            self.training_progress.error = " ".join(diag_parts)
+                            logger.error(
+                                "Training worker died: %s", self.training_progress.error
+                            )
                     self.is_training = False
                     self._event_queue = None
                     self._stop_queue = None
@@ -912,7 +957,9 @@ class TrainingBackend:
 
         # Any exception between the handshake above and the flag reset below would
         # otherwise leave _spawn_in_progress latched, wedging is_training_active
-        # (and the install route) until restart.
+        # (and the install route) until restart.  Use ``finally`` so the flag is
+        # cleared on *every* exit path — including adopt_pid() failures that
+        # previously leaked the flag.
         try:
             # Synchronous validation passed -> free VRAM (export + chat) now, before
             # auto-selection and the spawn, so placement sees the freed memory. Runs AFTER the handshake
@@ -920,8 +967,13 @@ class TrainingBackend:
             if before_spawn is not None:
                 try:
                     before_spawn()
-                except Exception:
-                    logger.warning("before_spawn hook failed; continuing", exc_info = True)
+                except Exception as _bsp_exc:
+                    logger.warning(
+                        "before_spawn hook failed (%s: %s); continuing with potentially "
+                        "reduced free VRAM — OOM risk elevated",
+                        type(_bsp_exc).__name__, _bsp_exc,
+                        exc_info = True,
+                    )
 
             if defer_auto_selection:
                 try:
@@ -1239,8 +1291,30 @@ class TrainingBackend:
             if target_proc is not None and proc is not target_proc:
                 return  # superseded by a new run; do not touch the new worker
             if proc is not None and proc.is_alive():
-                logger.info("Force-terminating training subprocess (pid=%s)", proc.pid)
-                proc.terminate()
+                # Attempt an emergency checkpoint save before killing the worker.
+                # Send a "save_checkpoint" command via stop_queue; give it a short
+                # grace period so in-flight optimizer state is persisted.
+                try:
+                    if self._stop_queue is not None:
+                        self._stop_queue.put(
+                            {"action": "emergency_save", "reason": "force_terminate"},
+                            timeout=1.0,
+                        )
+                        logger.info(
+                            "Requested emergency checkpoint save before force-terminate "
+                            "(pid=%s); waiting up to 10s",
+                            proc.pid,
+                        )
+                        proc.join(timeout=10.0)
+                except Exception:
+                    logger.warning(
+                        "Emergency checkpoint request failed; proceeding with kill",
+                        exc_info=True,
+                    )
+
+                if proc.is_alive():
+                    logger.info("Force-terminating training subprocess (pid=%s)", proc.pid)
+                    proc.terminate()
             cancelled = self._cancel_requested
             output_dir = self._output_dir
 
@@ -1411,12 +1485,39 @@ class TrainingBackend:
             # A restarted pump needs the worker handle and queue to drain/finalize;
             # their absence means nothing is left to recover.
             if self._proc is None or self._event_queue is None:
+                # No recovery possible — clear the stale flag so we stop retrying.
+                self._pump_running = False
                 return False
             if self._pump_thread is not None and self._pump_thread.is_alive():
                 return False
+            # If the worker is also dead AND the queue is empty, a new pump would
+            # immediately exit without updating progress — leaving the UI stuck.
+            # Detect this and finalize directly instead of spawning a doomed pump.
+            worker_alive = self._proc.is_alive()
+            if not worker_alive:
+                try:
+                    queue_empty = self._event_queue.empty()
+                except Exception:
+                    queue_empty = True
+                if queue_empty:
+                    logger.warning(
+                        "Pump crashed after worker exit with empty queue; "
+                        "clearing _pump_running so is_training_active self-heals."
+                    )
+                    self._pump_running = False
+                    # Ensure progress reflects terminal state so the UI unsticks.
+                    p = self._progress
+                    if p.is_training and not p.is_completed and not p.error:
+                        p.is_training = False
+                        p.error = (
+                            "Training process exited unexpectedly "
+                            "(event pump crashed; no final status received)"
+                        )
+                    return False
             logger.error(
-                "Training event pump thread died while the worker is still running; "
-                "restarting it so progress updates resume."
+                "Training event pump thread died (%s); restarting it so progress "
+                "updates resume.",
+                "worker alive" if worker_alive else "worker dead, queue has events",
             )
             new_pump = threading.Thread(target = self._pump_loop, daemon = True)
             self._pump_thread = new_pump

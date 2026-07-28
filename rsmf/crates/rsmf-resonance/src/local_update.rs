@@ -1,5 +1,6 @@
 use ndarray::{Array1, Array2};
 use rsmf_core::{ResonantTensor, SpectralConfig, Stratum};
+use crate::corrector::reorthogonalize_columns;
 
 /// Local resonance operator for single-stratum updates.
 ///
@@ -56,12 +57,20 @@ impl<'a> LocalResonance<'a> {
             sigma_grad[i] = grad_i / batch as f64;
         }
 
-        // Add spectral regularization gradient: ∂Ω/∂σᵢ = -2λ/σᵢ³ (soft thresholding)
+        // Add spectral regularization gradient.
+        // Original form ∂Ω/∂σ = -2λ/σ³ diverges at σ→0 and creates a
+        // discontinuous guard at |σ|>ε.  Replaced with Huber-smoothed variant:
+        //   g(σ) = -2λ · σ / (σ² + ε²)^{3/2}
+        // which is C¹ everywhere, asymptotes to -2λ/σ³ for σ≫ε, and
+        // saturates to -2λ·σ/ε³ near zero (bounded magnitude).
+        let eps = self.config.epsilon;
+        let eps3 = eps * eps * eps;
         for i in 0..k {
             let s = tensor.stratum.sigma[i];
-            if s.abs() > self.config.epsilon {
-                sigma_grad[i] += self.config.lambda_spectral * (-2.0 / (s * s * s));
-            }
+            let s2_plus_eps2 = s * s + eps * eps;
+            let denom = s2_plus_eps2 * s2_plus_eps2.sqrt(); // (σ²+ε²)^{3/2}
+            let huber_reg = -2.0 * s / denom.max(eps3);
+            sigma_grad[i] += self.config.lambda_spectral * huber_reg;
         }
 
         // Add inter-stratum coupling gradient (simplified Γ)
@@ -82,6 +91,11 @@ impl<'a> LocalResonance<'a> {
             tensor.stratum.sigma[i] = tensor.stratum.sigma[i].max(self.config.epsilon);
             residual_norm += delta * delta;
         }
+
+        // Re-orthogonalize U/V bases to prevent drift from accumulated
+        // numerical error across update steps.
+        reorthogonalize_columns(&mut tensor.stratum.u_basis);
+        reorthogonalize_columns(&mut tensor.stratum.v_basis);
 
         // Update metadata
         tensor.is_updated = true;

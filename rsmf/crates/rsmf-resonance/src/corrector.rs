@@ -12,6 +12,82 @@ pub struct CoherenceCorrector<'a> {
     config: &'a SpectralConfig,
 }
 
+// ---------------------------------------------------------------------------
+// Orthogonality utilities (public for use in merge / checkpoint contexts)
+// ---------------------------------------------------------------------------
+
+/// Modified Gram-Schmidt re-orthogonalization of column vectors in-place.
+///
+/// Operates on an m×k matrix whose *columns* are the basis vectors.
+/// Returns the maximum deviation from orthonormality observed **before**
+/// correction (useful as a drift diagnostic).
+pub fn reorthogonalize_columns(basis: &mut Array2<f64>) -> f64 {
+    let k = basis.ncols();
+    if k == 0 {
+        return 0.0;
+    }
+
+    // Measure pre-correction orthogonality error: max |⟨cᵢ, cⱼ⟩ - δᵢⱼ|
+    let mut max_err = 0.0_f64;
+    for i in 0..k {
+        let ni = col_norm(basis, i);
+        max_err = max_err.max((ni - 1.0).abs());
+        for j in (i + 1)..k {
+            let dot = col_dot(basis, i, j);
+            max_err = max_err.max(dot.abs());
+        }
+    }
+
+    // Classical Gram-Schmidt with re-projection (more numerically stable
+    // than one-pass MGS for near-singular inputs).
+    for i in 0..k {
+        // Subtract projections onto all previous columns
+        for j in 0..i {
+            let d = col_dot(basis, j, i);
+            for row in 0..basis.nrows() {
+                basis[[row, i]] -= d * basis[[row, j]];
+            }
+        }
+        // Normalize
+        let n = col_norm(basis, i);
+        if n > 1e-30 {
+            for row in 0..basis.nrows() {
+                basis[[row, i]] /= n;
+            }
+        }
+    }
+
+    max_err
+}
+
+/// Verify orthonormality of column basis. Returns max |⟨cᵢ,cⱼ⟩ − δᵢⱼ|.
+pub fn orthogonality_error(basis: &Array2<f64>) -> f64 {
+    let k = basis.ncols();
+    let mut max_err = 0.0_f64;
+    for i in 0..k {
+        let ni = col_norm(basis, i);
+        max_err = max_err.max((ni - 1.0).abs());
+        for j in (i + 1)..k {
+            let dot = col_dot(basis, i, j);
+            max_err = max_err.max(dot.abs());
+        }
+    }
+    max_err
+}
+
+fn col_dot(m: &Array2<f64>, a: usize, b: usize) -> f64 {
+    let rows = m.nrows();
+    let mut s = 0.0;
+    for r in 0..rows {
+        s += m[[r, a]] * m[[r, b]];
+    }
+    s
+}
+
+fn col_norm(m: &Array2<f64>, c: usize) -> f64 {
+    col_dot(m, c, c).sqrt()
+}
+
 impl<'a> CoherenceCorrector<'a> {
     pub fn new(config: &'a SpectralConfig) -> Self {
         Self { config }
@@ -70,6 +146,26 @@ impl<'a> CoherenceCorrector<'a> {
                     tensors[i].stratum.sigma[j] = tensors[i].stratum.sigma[j].max(self.config.epsilon);
                 }
             }
+        }
+
+        // Re-orthogonalize U and V bases after spectral modification.
+        // Sigma blending can indirectly break basis orthonormality when the
+        // stratum was previously updated via gradient steps that only touched σ.
+        for t in tensors.iter_mut() {
+            reorthogonalize_columns(&mut t.stratum.u_basis);
+            reorthogonalize_columns(&mut t.stratum.v_basis);
+        }
+
+        // Orthogonality verification checkpoint (debug / merge guard)
+        #[cfg(debug_assertions)]
+        for (idx, t) in tensors.iter().enumerate() {
+            let u_err = orthogonality_error(&t.stratum.u_basis);
+            let v_err = orthogonality_error(&t.stratum.v_basis);
+            debug_assert!(
+                u_err < 1e-8 && v_err < 1e-8,
+                "Post-correction orthogonality drift at stratum {}: U_err={:.2e}, V_err={:.2e}",
+                idx, u_err, v_err
+            );
         }
 
         // Recompute and return minimum coherence after correction

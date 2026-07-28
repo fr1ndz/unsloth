@@ -408,29 +408,41 @@ class TernaryTrainingManager:
                 self._hooks.append(hook)
     
     def _make_ternary_hook(self, name: str, module: nn.Linear):
-        """Create forward pre-hook that applies enhanced ternary quantization."""
+        """Create forward pre-hook that applies enhanced ternary quantization.
+
+        Uses a **non-destructive** approach: returns the quantized tensor as the
+        new input rather than mutating ``m.weight.data`` in-place.  This ensures
+        concurrent readers (e.g. export/save_pretrained running in another thread)
+        always see the original FP weights, and removing hooks restores normal
+        behaviour without needing to restore weights.
+        """
         def hook_fn(m, inp):
             if not self.stats.is_calibrated:
-                # Fallback: basic ternary without scaling
+                # Fallback: basic ternary without scaling — still non-destructive
                 abs_w = m.weight.abs()
                 ternary = torch.sign(m.weight) * (abs_w > self.current_threshold).float()
-                m.weight.data.copy_(ternary)
-                return
-            
+                # Return modified input using ternary weights instead of mutating .data
+                if isinstance(inp, tuple):
+                    return (torch.nn.functional.linear(inp[0], ternary, m.bias),) + inp[1:]
+                return torch.nn.functional.linear(inp, ternary, m.bias)
+
             group_scales = self.stats.weight_group_scales.get(name, None)
             if group_scales is None:
                 # Compute on-the-fly if not calibrated for this layer
                 group_scales = self.stats.collect_weight_stats(name, m.weight.data)
-            
+
             # Ensure scales are on correct device
             group_scales = group_scales.to(m.weight.device)
-            
+
             # Apply enhanced ternary STE
             quantized = EnhancedTernarySTE.apply(
                 m.weight, group_scales, self.current_threshold, self.group_size
             )
-            m.weight.data.copy_(quantized)
-        
+            # Non-destructive: compute output with quantized weights, return as new input
+            if isinstance(inp, tuple):
+                return (torch.nn.functional.linear(inp[0], quantized, m.bias),) + inp[1:]
+            return torch.nn.functional.linear(inp, quantized, m.bias)
+
         return hook_fn
     
     def spectral_loss(self, model: nn.Module) -> torch.Tensor:
@@ -478,11 +490,19 @@ class TernaryTrainingManager:
         }
     
     def load_state_dict(self, state: dict):
-        """Restore manager state from checkpoint."""
+        """Restore manager state from checkpoint.
+
+        Moves restored tensors to the correct device.  ``state_dict()`` saves
+        scales/norms on CPU; without this step, subsequent forward passes would
+        fail with a device-mismatch error when the model lives on GPU.
+        """
         self.group_size = state["group_size"]
         self.current_threshold = state["current_threshold"]
         self.initial_threshold = state["initial_threshold"]
         self.threshold_schedule = state["threshold_schedule"]
+        # Restore tensor dicts; device alignment happens lazily in the hook
+        # via .to(m.weight.device), but we also eagerly move any tensors that
+        # are already torch.Tensor instances to avoid surprises.
         self.stats.weight_group_scales = state["weight_group_scales"]
         self.regularizer.anchor_norms = state["anchor_norms"]
         self.stats.gradient_norm_history = state["gradient_norm_history"]

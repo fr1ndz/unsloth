@@ -268,6 +268,42 @@ def _try_register_external_export(path: Path) -> tuple[bool, Optional[str]]:
         return False, None
 
 
+def _validate_export_artifact(output_path: str) -> None:
+    """Verify that an exported artifact actually exists and is non-trivial.
+
+    Raises ``HTTPException(400)`` if the path is missing or suspiciously small
+    (< 1 KB), which typically indicates a truncated write (disk full, subprocess
+    crash after returning True).  Keeps users from receiving a success response
+    for a corrupt file.
+    """
+    import os as _os
+    p = Path(output_path)
+    if p.is_dir():
+        # Directory exports (merged/LoRA): must contain at least one file > 0 bytes
+        files = list(p.rglob("*"))
+        real_files = [f for f in files if f.is_file() and f.stat().st_size > 0]
+        if not real_files:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Export directory exists but contains no valid files: {output_path}",
+            )
+    elif p.is_file():
+        size = p.stat().st_size
+        if size < 1024:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Exported file is suspiciously small ({size} bytes); "
+                    f"the write may have been truncated: {output_path}"
+                ),
+            )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Export artifact not found at: {output_path}",
+        )
+
+
 def _export_details(output_path: Optional[str]) -> Optional[Dict[str, Any]]:
     """Return relative export paths, keeping external absolute paths visible."""
     if not output_path:
@@ -601,10 +637,19 @@ async def apply_pruning(
         ensure_dir(Path(save_dir))
         
         def _do_prune():
-            model, analysis = pruner.prune(config=config)
-            # Save pruned model
-            model.save_pretrained(save_dir)
-            backend.current_tokenizer.save_pretrained(save_dir)
+            # Acquire the backend model lock to prevent concurrent inference /
+            # chat from reading a half-mutated model while pruning runs.
+            import threading as _threading
+            _model_lock = getattr(backend, "_model_lock", None)
+            if _model_lock is None:
+                # Fallback: create a module-level lock if the backend doesn't
+                # expose one (older versions / test harnesses).
+                _model_lock = _threading.Lock()
+            with _model_lock:
+                model, analysis = pruner.prune(config=config)
+                # Save pruned model
+                model.save_pretrained(save_dir)
+                backend.current_tokenizer.save_pretrained(save_dir)
             return True, f"Pruned {analysis.actual_ratio:.1%} of parameters ({analysis.actual_pruned_params:,} params)", save_dir
         
         success, message, output_path = await asyncio.to_thread(_do_prune)

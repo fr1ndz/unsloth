@@ -13,9 +13,13 @@ pub mod tensor;
 pub mod config;
 pub mod coherence;
 pub mod error;
+pub mod ternary;
+pub mod svd;
 
 pub use stratum::Stratum;
 pub use tensor::ResonantTensor;
 pub use config::SpectralConfig;
 pub use coherence::CoherenceMetric;
 pub use error::RsmfError;
+pub use ternary::TernaryAdapter;
+pub use svd::{randomized_svd, TruncatedSvd, nuclear_norm, spectral_norm, stable_rank};

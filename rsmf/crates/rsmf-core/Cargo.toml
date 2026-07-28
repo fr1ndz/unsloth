@@ -10,6 +10,8 @@ num-traits = { workspace = true }
 half = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
+rand = { workspace = true }
+rand_distr = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true }

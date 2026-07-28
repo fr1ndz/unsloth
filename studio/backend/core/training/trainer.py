@@ -3630,7 +3630,41 @@ class UnslothTrainer:
 
             logger.error(f"Training error: {e}")
             logger.error(f"Full traceback:\n{traceback.format_exc()}")
-            self._update_progress(is_training = False, error = str(e))
+
+            # Provide actionable guidance for common failure modes instead of
+            # a raw exception string that leaves users guessing.
+            err_str = str(e).lower()
+            err_type = type(e).__name__
+            user_msg = str(e)
+
+            is_oom = (
+                "out of memory" in err_str
+                or "cuda oom" in err_str
+                or "hip out of memory" in err_str
+                or err_type in ("OutOfMemoryError", "RuntimeError") and "memory" in err_str
+            )
+            if is_oom:
+                user_msg = (
+                    f"CUDA/GPU Out of Memory: {e}\n\n"
+                    "Suggestions:\n"
+                    "  • Reduce batch size (try halving it)\n"
+                    "  • Reduce max_seq_length\n"
+                    "  • Enable gradient checkpointing (set to 'unsloth' or True)\n"
+                    "  • Use a smaller LoRA rank\n"
+                    "  • Free VRAM by closing other models/chat sessions"
+                )
+            elif "disk" in err_str and ("no space" in err_str or "full" in err_str):
+                user_msg = (
+                    f"Disk full during save: {e}\n\n"
+                    "Free disk space and retry, or change the output directory."
+                )
+            elif "permission" in err_str or "access denied" in err_str:
+                user_msg = (
+                    f"Permission error: {e}\n\n"
+                    "Check that the output directory is writable."
+                )
+
+            self._update_progress(is_training = False, error = user_msg)
 
         finally:
             self.is_training = False

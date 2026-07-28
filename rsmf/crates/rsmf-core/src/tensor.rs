@@ -1,6 +1,7 @@
 use ndarray::{Array1, Array2};
 use crate::stratum::Stratum;
 use crate::config::SpectralConfig;
+use crate::svd;
 
 /// Resonant Tensor Ψₗ = σ ⊗ U ⊗ Vᵀ with resonance metadata.
 ///
@@ -73,6 +74,86 @@ impl ResonantTensor {
     /// Memory footprint including metadata.
     pub fn memory_bytes(&self) -> usize {
         self.stratum.memory_bytes() + 4 * std::mem::size_of::<f64>() + std::mem::size_of::<bool>()
+    }
+
+    // ── RsLoRA Scaling ──────────────────────────────────────────────
+
+    /// Compute RsLoRA scaling factor: α / √rank.
+    ///
+    /// Unlike linear LoRA scaling (α/rank), this preserves gradient magnitude
+    /// across rank changes, following the RsLoRA formulation.
+    pub fn rslora_scale(&self, alpha: f64) -> f64 {
+        let rank = self.stratum.rank() as f64;
+        if rank < 1.0 { return 0.0; }
+        alpha / rank.sqrt()
+    }
+
+    // ── Stable Rank Monitoring ──────────────────────────────────────
+
+    /// Nuclear norm: ‖W‖_* = Σ σᵢ (sum of singular values).
+    pub fn nuclear_norm(&self) -> f64 {
+        svd::nuclear_norm(&self.stratum.sigma)
+    }
+
+    /// Spectral norm: ‖W‖₂ = σ_max (largest singular value).
+    pub fn spectral_norm(&self) -> f64 {
+        svd::spectral_norm(&self.stratum.sigma)
+    }
+
+    /// Stable rank: sr(W) = (‖W‖_* / ‖W‖₂)².
+    ///
+    /// Measures effective dimensionality of the weight spectrum.
+    /// - sr ≈ 1: rank-1 dominant (collapsed spectrum)
+    /// - sr ≈ k: uniform spectrum (well-distributed energy)
+    /// Useful for detecting spectral collapse during training.
+    pub fn stable_rank(&self) -> f64 {
+        svd::stable_rank(&self.stratum.sigma)
+    }
+
+    // ── Adaptive Rank ───────────────────────────────────────────────
+
+    /// Adaptively adjust rank based on energy ratio threshold from config.
+    ///
+    /// If captured energy / total_energy > threshold, the current rank
+    /// is sufficient. If below, more components are needed.
+    ///
+    /// Returns the recommended new rank k' ∈ [1, max_rank].
+    /// The caller is responsible for actually resizing the stratum
+    /// (re-running SVD or truncating).
+    ///
+    /// # Arguments
+    /// * `total_energy` - Total spectral energy (Σ σᵢ² of full matrix)
+    /// * `energy_threshold` - Minimum acceptable energy ratio (e.g., 0.95)
+    /// * `max_rank` - Upper bound on rank (typically hidden_dim)
+    pub fn adapt_rank(&self, total_energy: f64, energy_threshold: f64, max_rank: usize) -> usize {
+        let current_ratio = self.stratum.energy_ratio(total_energy);
+        let current_k = self.stratum.rank();
+
+        if current_ratio >= energy_threshold {
+            // Energy captured is sufficient — potentially shrink
+            // Find minimal k that still captures enough energy
+            let mut cumulative = 0.0;
+            for (i, &s) in self.stratum.sigma.iter().enumerate() {
+                cumulative += s * s;
+                if cumulative / total_energy >= energy_threshold {
+                    return (i + 1).max(1);
+                }
+            }
+            current_k
+        } else {
+            // Not enough energy captured — grow rank
+            // Estimate how many more components we need
+            // Assume remaining spectrum decays similarly to observed tail
+            let deficit = energy_threshold - current_ratio;
+            let avg_remaining_per_component = if current_k > 0 {
+                let last_sigma = self.stratum.sigma[current_k - 1];
+                (last_sigma * last_sigma).max(1e-30)
+            } else {
+                total_energy / max_rank as f64
+            };
+            let extra_needed = (deficit * total_energy / avg_remaining_per_component).ceil() as usize;
+            (current_k + extra_needed.max(1)).min(max_rank)
+        }
     }
 }
 

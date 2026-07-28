@@ -1,5 +1,5 @@
 use ndarray::{Array1, Array2};
-use rsmf_core::{ResonantTensor, SpectralConfig, Stratum};
+use rsmf_core::{ResonantTensor, SpectralConfig, Stratum, randomized_svd};
 use crate::forward::StratifiedForward;
 use crate::activation_cache::ActivationCache;
 
@@ -33,20 +33,23 @@ impl RsmfModel {
         let mut layers = Vec::with_capacity(num_layers);
 
         for l in 0..num_layers {
-            // Generate random orthogonal-ish matrix via QR decomposition
-            // (simplified: use scaled random matrix, real impl would use proper init)
             let k = config.top_k.min(hidden_dim);
-            let sigma = Array1::from_vec(
-                (0..k).map(|i| 1.0 / (1.0 + i as f64)).collect()
-            );
-            let u = Array2::eye(hidden_dim)
-                .slice(ndarray::s![.., ..k])
-                .to_owned();
-            let v = Array2::eye(hidden_dim)
-                .slice(ndarray::s![.., ..k])
-                .to_owned();
 
-            let stratum = Stratum::new(sigma, u, v, l);
+            // Generate a random weight matrix with Xavier-like scaling,
+            // then decompose via randomized truncated SVD.
+            let scale = (2.0 / hidden_dim as f64).sqrt();
+            let mut rng = rand::thread_rng();
+            let w = Array2::from_shape_fn((hidden_dim, hidden_dim), |_| {
+                use rand_distr::{Distribution, StandardNormal};
+                let z: f64 = StandardNormal.sample(&mut rng);
+                z * scale
+            });
+
+            // Randomized SVD: rank-k approximation with oversampling + power iteration
+            let n_oversamples = 5.min(hidden_dim - k);
+            let svd = randomized_svd(&w, k, n_oversamples, 2);
+
+            let stratum = Stratum::new(svd.sigma, svd.u, svd.v, l);
             layers.push(ResonantTensor::from_stratum(stratum));
         }
 

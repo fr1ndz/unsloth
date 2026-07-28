@@ -9,6 +9,6 @@ pub mod trainer;
 pub mod loss;
 pub mod schedule;
 
-pub use trainer::RsmfTrainer;
+pub use trainer::{RsmfTrainer, GradientSnrEstimator, TrainStats};
 pub use loss::ResonantLoss;
 pub use schedule::CoherenceSchedule;

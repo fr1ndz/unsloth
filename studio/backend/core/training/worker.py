@@ -2191,6 +2191,37 @@ def run_training_process(*, event_queue: Any, stop_queue: Any, config: dict) -> 
         stop_queue: mp.Queue for stop commands from the parent.
         config: Training config dict with all parameters.
     """
+    # ── SIGTERM / SIGINT graceful shutdown ──
+    # Register signal handlers early so that external kills (system shutdown,
+    # parent crash, manual SIGTERM) set the stop flag instead of dying mid-step.
+    # The trainer's main loop checks should_stop each step and saves a checkpoint.
+    _sigterm_received = False
+
+    def _handle_sigterm(signum, frame):  # noqa: ARG001
+        nonlocal _sigterm_received
+        _sigterm_received = True
+        try:
+            print(
+                f"Worker received signal {signum}; requesting graceful stop...",
+                file=sys.stderr, flush=True,
+            )
+        except Exception:
+            pass
+        # Inject a stop command into the queue so the training loop picks it up.
+        try:
+            stop_queue.put({"type": "stop", "save": True}, timeout=2.0)
+        except Exception:
+            pass
+
+    try:
+        import signal as _signal_mod
+        _signal_mod.signal(_signal_mod.SIGTERM, _handle_sigterm)
+        if hasattr(_signal_mod, "SIGINT"):
+            _signal_mod.signal(_signal_mod.SIGINT, _handle_sigterm)
+    except (OSError, ValueError):
+        # signal() fails in non-main threads or on some Windows configs; best-effort.
+        pass
+
     # Off on Linux (forked datasets map() workers deadlock otherwise); on spawn
     # platforms map() is in-process, so keep tokenizer threads on for faster prep.
     os.environ["TOKENIZERS_PARALLELISM"] = (
@@ -2826,14 +2857,12 @@ def run_training_process(*, event_queue: Any, stop_queue: Any, config: dict) -> 
 
         logger.info("Subprocess loaded transformers %s", transformers.__version__)
     except Exception as exc:
-        event_queue.put(
-            {
-                "type": "error",
-                "error": f"Failed to import ML libraries: {exc}",
-                "stack": traceback.format_exc(limit = 20),
-                "ts": time.time(),
-            }
-        )
+        _safe_put(event_queue, {
+            "type": "error",
+            "error": f"Failed to import ML libraries: {exc}",
+            "stack": traceback.format_exc(limit = 20),
+            "ts": time.time(),
+        })
         return
 
     # ── 2b. EMBEDDING MODEL FAST-PATH ──
@@ -2844,14 +2873,12 @@ def run_training_process(*, event_queue: Any, stop_queue: Any, config: dict) -> 
         try:
             _run_embedding_training(event_queue, stop_queue, config)
         except Exception as exc:
-            event_queue.put(
-                {
-                    "type": "error",
-                    "error": str(exc),
-                    "stack": traceback.format_exc(limit = 20),
-                    "ts": time.time(),
-                }
-            )
+            _safe_put(event_queue, {
+                "type": "error",
+                "error": str(exc),
+                "stack": traceback.format_exc(limit = 20),
+                "ts": time.time(),
+            })
         return
 
     # ── 3. Create a fresh trainer instance ──
@@ -3061,17 +3088,15 @@ def run_training_process(*, event_queue: Any, stop_queue: Any, config: dict) -> 
             event_queue.put({"type": "model_load_completed", "ts": time.time()})
         if not success or trainer.should_stop:
             if trainer.should_stop:
-                event_queue.put({"type": "complete", "output_dir": None, "ts": time.time()})
+                _safe_put(event_queue, {"type": "complete", "output_dir": None, "ts": time.time()})
             else:
                 error_msg = trainer.training_progress.error or "Failed to load model"
-                event_queue.put(
-                    {
-                        "type": "error",
-                        "error": error_msg,
-                        "stack": "",
-                        "ts": time.time(),
-                    }
-                )
+                _safe_put(event_queue, {
+                    "type": "error",
+                    "error": error_msg,
+                    "stack": "",
+                    "ts": time.time(),
+                })
             return
 
         # ── 4c½. POST-TRAINING 1-BIT QUANTIZATION FAST-PATH ──
@@ -3360,34 +3385,76 @@ def run_training_process(*, event_queue: Any, stop_queue: Any, config: dict) -> 
                 "or use a smaller model / higher quantization."
             )
             logger.error("Training stopped: GPU OOM — %s", exc)
-            event_queue.put(
-                {
-                    "type": "error",
-                    "error": _oom_msg,
-                    "stack": traceback.format_exc(limit = 20),
-                    "ts": time.time(),
-                }
-            )
+            _safe_put(event_queue, {
+                "type": "error",
+                "error": _oom_msg,
+                "stack": traceback.format_exc(limit = 20),
+                "ts": time.time(),
+            })
         else:
-            event_queue.put(
-                {
-                    "type": "error",
-                    "error": str(exc),
-                    "stack": traceback.format_exc(limit = 20),
-                    "ts": time.time(),
-                }
+            _safe_put(event_queue, {
+                "type": "error",
+                "error": str(exc),
+                "stack": traceback.format_exc(limit = 20),
+                "ts": time.time(),
+            })
+
+
+def _safe_put(event_queue: Any, payload: dict) -> bool:
+    """Put *payload* onto *event_queue*, swallowing IPC errors.
+
+    Returns True on success.  On failure (broken pipe, EOFError, pickle error,
+    queue.Full) logs a best-effort warning and returns False so callers can
+    decide whether to continue or bail.  Use this for **error-reporting** puts
+    inside except-blocks where a secondary IPC failure would otherwise mask the
+    original exception and kill the worker silently.
+    """
+    try:
+        event_queue.put(payload)
+        return True
+    except Exception:
+        try:
+            import logging as _logging, sys as _sys
+            _logging.getLogger(__name__).warning(
+                "_safe_put failed (%s); original error may be lost",
+                type(_sys.exc_info()[1]).__name__,
+                exc_info=True,
             )
+        except Exception:
+            pass
+        return False
 
 
 def _send_status(event_queue: Any, message: str) -> None:
-    """Send a status update to the parent process."""
-    event_queue.put(
-        {
-            "type": "status",
-            "message": message,
-            "ts": time.time(),
-        }
-    )
+    """Send a status update to the parent process.
+
+    Swallows IPC errors (broken pipe, full queue, pickling failures) so that a
+    transient communication glitch never kills the training worker silently.
+    The parent detects worker death via exitcode and reports it with diagnostics;
+    losing a *status* message is always preferable to losing the entire run.
+    """
+    try:
+        event_queue.put(
+            {
+                "type": "status",
+                "message": message,
+                "ts": time.time(),
+            }
+        )
+    except Exception:
+        # Broken pipe / EOFError / pickle.PicklingError / queue.Full — the parent
+        # will observe the worker exit and surface the exitcode-based diagnosis.
+        # Logging here is best-effort; if stderr is also broken, there's nothing
+        # we can do.
+        try:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "_send_status failed (%s); parent will detect worker exit",
+                type(sys.exc_info()[1]).__name__ if "sys" in dir() else "unknown",
+                exc_info=True,
+            )
+        except Exception:
+            pass
 
 
 def _run_embedding_training(event_queue: Any, stop_queue: Any, config: dict) -> None:

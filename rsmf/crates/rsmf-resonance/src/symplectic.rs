@@ -139,7 +139,11 @@ impl<'a> SymplecticModulator<'a> {
         for i in 0..k {
             let s = sigma[i].max(eps);
             // d/dσ [ln²(σ)] = 2·ln(σ)/σ
-            let log_term = 2.0 * s.ln() / s;
+            // GRADIENT TRAP FIX: when σ < 1, ln(σ) < 0 and 2·ln(σ)/σ pushes
+            // σ toward zero (runaway collapse). Clamp ln(σ) from below so the
+            // repulsive part of the potential saturates instead of diverging.
+            let ln_s = s.ln().max(eps.ln()); // ln(ε) is negative; caps magnitude
+            let log_term = 2.0 * ln_s / s;
             // d/dσ [1/(σ²+ε)] = -2σ/(σ²+ε)²
             let inv_term = -2.0 * s / (s * s + eps).powi(2);
             grad[i] = lambda * (log_term + inv_term);

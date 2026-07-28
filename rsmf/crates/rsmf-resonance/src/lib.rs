@@ -15,5 +15,5 @@ pub mod symplectic;
 pub use local_update::LocalResonance;
 pub use backward_channel::ResonantBackward;
 pub use coupling::InterStratumCoupling;
-pub use corrector::CoherenceCorrector;
+pub use corrector::{CoherenceCorrector, reorthogonalize_columns, orthogonality_error};
 pub use symplectic::{SymplecticModulator, SymplecticState};
