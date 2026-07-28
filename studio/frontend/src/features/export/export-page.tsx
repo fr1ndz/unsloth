@@ -68,6 +68,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { ModelCheckpoints } from "./api/export-api";
 import { ExportRunPanel } from "./components/export-run-panel";
 import { MethodPicker } from "./components/method-picker";
+import { PruningPanel } from "./components/pruning-panel";
 import { QuantPicker } from "./components/quant-picker";
 import {
   EXPORT_METHODS,
@@ -1724,6 +1725,15 @@ export function ExportPage() {
                   onPrivateRepoChange={setPrivateRepo}
                   onStart={handleStart}
                   onClose={handleClosePanel}
+                />
+              )}
+              {showPanel && (
+                <PruningPanel
+                  modelLoaded={!!selectedExportSource}
+                  onPruneComplete={(outputPath) => {
+                    setCustomSaveDirectory(outputPath);
+                  }}
+                  onError={(msg) => console.error("[Pruning]", msg)}
                 />
               )}
               {showPanel && (
